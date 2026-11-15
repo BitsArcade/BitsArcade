@@ -1,10 +1,9 @@
 from fastapi import FastAPI
-from app.core.config import settings
-from app.core.database import engine, Base
-from app.domain import parametros as parametros_models  # Importar modelos para que SQLAlchemy cree sus tablas
-from app.api.parametros import router as parametros_router, internal_router as parametros_internal_router
+from app.core.configuracion import settings
+from app.core.base_datos import engine, Base
+from app.domain import parametros as modelos_parametros
+from app.api.parametros import enrutador_parametros, enrutador_interno
 
-# Crear físicamente las tablas en SQLite (dev.db) si aún no existen
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -13,9 +12,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Registrar routers del Módulo de Parametrización Global (MOD-00)
-app.include_router(parametros_router)
-app.include_router(parametros_internal_router)
+app.include_router(enrutador_parametros)
+app.include_router(enrutador_interno)
 
 @app.get("/", tags=["General"])
 def leer_raiz():
@@ -28,7 +26,7 @@ def leer_raiz():
     }
 
 @app.get("/health", tags=["Monitoreo"])
-def health_check():
+def verificar_salud():
     """Endpoint de verificación de salud (Health Check) del microservicio."""
     return {
         "status": "healthy",

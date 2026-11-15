@@ -1,96 +1,100 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
-from app.core.database import get_db
+from app.core.base_datos import get_db
 from app.domain.parametros import (
-    MonedaCreate,
-    MonedaResponse,
-    ActualizarIvaRequest,
-    ActualizarMargenRequest,
-    MetodoPagoCreate,
-    MetodoPagoResponse
+    CrearMonedaEntrada,
+    MonedaSalida,
+    ActualizarIvaEntrada,
+    ActualizarMargenEntrada,
+    CrearMetodoPagoEntrada,
+    MetodoPagoSalida
 )
-from app.services.parametros_service import ParametrosService
+from app.services.servicio_parametros import ServicioParametros
 
-# Router público/administrativo para las Historias de Usuario HU-01 a HU-05
-router = APIRouter(prefix="/api/v1/parametros", tags=["MOD-00: Parametrización (HU-01 a HU-05)"])
+enrutador_parametros = APIRouter(
+    prefix="/api/v1/parametros",
+    tags=["MOD-00: Parametrización (HU-01 a HU-05)"]
+)
 
-# Router interno para los contratos entre microservicios COM-01 a COM-03 (Tabla 10)
-internal_router = APIRouter(prefix="/internal/v1/parametros", tags=["Contratos Internos MOD-00 (COM-01 a COM-03)"])
+enrutador_interno = APIRouter(
+    prefix="/internal/v1/parametros",
+    tags=["Contratos Internos MOD-00 (COM-01 a COM-03)"]
+)
 
-service = ParametrosService()
+servicio = ServicioParametros()
 
 # =====================================================================
 # HISTORIAS DE USUARIO DEL SPRINT-00 (HU-01 a HU-05)
 # =====================================================================
 
-@router.post("/monedas", response_model=MonedaResponse, status_code=status.HTTP_201_CREATED)
-def registrar_nueva_moneda(datos: MonedaCreate, db: Session = Depends(get_db)):
+@enrutador_parametros.post("/monedas", response_model=MonedaSalida, status_code=status.HTTP_201_CREATED)
+def registrar_nueva_moneda(datos: CrearMonedaEntrada, sesion: Session = Depends(get_db)):
     """HU-01 (FUN-00.1.1 / PRO-00.1.1): Registrar nueva moneda habilitada."""
-    return service.registrar_moneda(db, datos)
+    return servicio.registrar_moneda(sesion, datos)
 
 
-@router.get("/monedas", response_model=list[MonedaResponse])
-def consultar_monedas_habilitadas(db: Session = Depends(get_db)):
+@enrutador_parametros.get("/monedas", response_model=list[MonedaSalida])
+def consultar_monedas_habilitadas(sesion: Session = Depends(get_db)):
     """HU-02 (FUN-00.1.2 / PRO-00.1.2): Consultar monedas actualmente activas."""
-    service.inicializar_datos_por_defecto(db)
-    return service.consultar_monedas_habilitadas(db)
+    servicio.inicializar_datos_por_defecto(sesion)
+    return servicio.consultar_monedas_habilitadas(sesion)
 
 
-@router.put("/impuesto-iva")
-def actualizar_tasa_iva(datos: ActualizarIvaRequest, db: Session = Depends(get_db)):
+@enrutador_parametros.put("/impuesto-iva")
+def actualizar_tasa_iva(datos: ActualizarIvaEntrada, sesion: Session = Depends(get_db)):
     """HU-03 (FUN-00.1.3 / PRO-00.1.3): Actualizar porcentaje de impuesto IVA (0 a 100)."""
-    config = service.actualizar_tasa_iva(db, datos.tasa_iva)
+    configuracion = servicio.actualizar_tasa_iva(sesion, datos.tasa_iva)
     return {
         "mensaje": "Tasa de impuesto IVA actualizada correctamente.",
-        "tasa_iva_porcentaje": config.tasa_iva
+        "tasa_iva_porcentaje": configuracion.tasa_iva
     }
 
 
-@router.put("/margen-ganancia")
-def configurar_margen_ganancia(datos: ActualizarMargenRequest, db: Session = Depends(get_db)):
+@enrutador_parametros.put("/margen-ganancia")
+def configurar_margen_ganancia(datos: ActualizarMargenEntrada, sesion: Session = Depends(get_db)):
     """HU-04 (FUN-00.1.4 / PRO-00.1.4): Configurar margen de ganancia / markup (> 0)."""
-    config = service.configurar_margen_ganancia(db, datos.margen_ganancia)
+    configuracion = servicio.configurar_margen_ganancia(sesion, datos.margen_ganancia)
     return {
         "mensaje": "Margen comercial (markup) actualizado correctamente.",
-        "margen_ganancia_porcentaje": config.margen_ganancia
+        "margen_ganancia_porcentaje": configuracion.margen_ganancia
     }
 
 
-@router.get("/metodos-pago", response_model=list[MetodoPagoResponse])
-def listar_metodos_de_pago(db: Session = Depends(get_db)):
+@enrutador_parametros.get("/metodos-pago", response_model=list[MetodoPagoSalida])
+def listar_metodos_de_pago(sesion: Session = Depends(get_db)):
     """Consulta el listado de métodos de pago y su estado (Activo/Inactivo)."""
-    return service.listar_metodos_pago(db)
+    return servicio.listar_metodos_pago(sesion)
 
 
-@router.post("/metodos-pago", response_model=MetodoPagoResponse, status_code=status.HTTP_201_CREATED)
-def registrar_metodo_de_pago(datos: MetodoPagoCreate, db: Session = Depends(get_db)):
+@enrutador_parametros.post("/metodos-pago", response_model=MetodoPagoSalida, status_code=status.HTTP_201_CREATED)
+def registrar_metodo_de_pago(datos: CrearMetodoPagoEntrada, sesion: Session = Depends(get_db)):
     """Endpoint auxiliar para registrar métodos de pago adicionales."""
-    return service.crear_metodo_pago(db, datos)
+    return servicio.crear_metodo_pago(sesion, datos)
 
 
-@router.patch("/metodos-pago/{metodo_id}/inactivar", response_model=MetodoPagoResponse)
-def inactivar_metodo_de_pago(metodo_id: int, db: Session = Depends(get_db)):
+@enrutador_parametros.patch("/metodos-pago/{metodo_id}/inactivar", response_model=MetodoPagoSalida)
+def inactivar_metodo_de_pago(metodo_id: int, sesion: Session = Depends(get_db)):
     """HU-05 (FUN-00.1.5 / PRO-00.1.5): Inactivar método de pago mediante borrado lógico."""
-    return service.inactivar_metodo_pago(db, metodo_id)
+    return servicio.inactivar_metodo_pago(sesion, metodo_id)
 
 
 # =====================================================================
 # CONTRATOS INTERNOS DE INTEROPERABILIDAD (Tabla 10 del Informe)
 # =====================================================================
 
-@internal_router.get("/financieros")
-def obtener_parametros_financieros_com01(db: Session = Depends(get_db)):
+@enrutador_interno.get("/financieros")
+def obtener_parametros_financieros_com01(sesion: Session = Depends(get_db)):
     """COM-01: Entrega {taxRate, margin} al módulo MOD-02 (Catálogo de Juegos)."""
-    return service.obtener_contrato_com01(db)
+    return servicio.obtener_contrato_com01(sesion)
 
 
-@internal_router.get("/orden-config")
-def obtener_configuracion_orden_com02(db: Session = Depends(get_db)):
+@enrutador_interno.get("/orden-config")
+def obtener_configuracion_orden_com02(sesion: Session = Depends(get_db)):
     """COM-02: Entrega {taxRate, currency} al módulo MOD-04 (Carrito y Órdenes)."""
-    return service.obtener_contrato_com02(db)
+    return servicio.obtener_contrato_com02(sesion)
 
 
-@internal_router.get("/tasa-cambio/{currency}")
-def obtener_tasa_cambio_com03(currency: str, db: Session = Depends(get_db)):
+@enrutador_interno.get("/tasa-cambio/{moneda_iso}")
+def obtener_tasa_cambio_com03(moneda_iso: str, sesion: Session = Depends(get_db)):
     """COM-03: Entrega {currency, exchangeRate} al módulo MOD-05 (Transacciones y Pagos)."""
-    return service.obtener_contrato_com03(db, currency)
+    return servicio.obtener_contrato_com03(sesion, moneda_iso)
