@@ -16,6 +16,28 @@ servicio_catalogo = ServicioCatalogo()
 ERROR_503 = {"description": "La base de datos no está disponible"}
 
 
+# Nota: las rutas estáticas (/juegos/buscar, ...) se declaran antes de /juegos/{gameId}.
+
+@enrutador_catalogo.get(
+    "/juegos/buscar",
+    response_model=Respuesta[PaginaJuegosSalida],
+    responses={400: {"description": "El texto de búsqueda debe tener al menos 2 caracteres"}, 503: ERROR_503},
+)
+def buscar_juegos_por_nombre(
+    q: str = Query("", description="Texto a buscar en el título (mínimo 2 caracteres)"),
+    page: int = Query(0, description="Número de página (desde 0)"),
+    size: int = Query(TAMANO_PAGINA_POR_DEFECTO, description="Tamaño de página (1 a 100)"),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-16: Buscar videojuegos por nombre.
+
+    Coincidencia parcial sobre el título, sin distinguir mayúsculas, solo juegos publicados.
+    Ejemplo: `GET /api/v1/catalogo/juegos/buscar?q=aurora`.
+    """
+    return servicio_catalogo.buscar_por_nombre(sesion, q, page, size)
+
+
 @enrutador_catalogo.get(
     "/juegos",
     response_model=Respuesta[PaginaJuegosSalida],

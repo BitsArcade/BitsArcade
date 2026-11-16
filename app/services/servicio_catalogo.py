@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.respuestas import manejar_errores_bd, respuesta
-from app.domain.catalogo import juego_a_item, validar_paginacion
+from app.domain.catalogo import juego_a_item, validar_paginacion, validar_texto_busqueda
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
 
 
@@ -23,3 +23,13 @@ class ServicioCatalogo:
         if total == 0:
             return respuesta("No existen juegos publicados", _pagina([], page, size, 0), False)
         return respuesta("Consulta de catálogo exitosa", _pagina(juegos, page, size, total))
+
+    def buscar_por_nombre(self, sesion: Session, texto: str | None, page: int, size: int) -> dict:
+        """HU-16: búsqueda parcial por título sobre juegos publicados."""
+        texto_limpio = validar_texto_busqueda(texto)
+        validar_paginacion(page, size)
+        with manejar_errores_bd("No fue posible realizar la búsqueda"):
+            juegos, total = self.repositorio.buscar_por_titulo(sesion, texto_limpio, page, size)
+        if total == 0:
+            return respuesta("No se encontraron juegos para la búsqueda", _pagina([], page, size, 0), False)
+        return respuesta("Búsqueda exitosa", _pagina(juegos, page, size, total))

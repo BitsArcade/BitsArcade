@@ -26,6 +26,17 @@ TAMANO_PAGINA_POR_DEFECTO = 20
 TAMANO_PAGINA_MAXIMO = 100
 
 
+LONGITUD_MINIMA_BUSQUEDA = 2
+
+
+def validar_texto_busqueda(texto: str | None) -> str:
+    """HU-16: el texto de búsqueda debe tener al menos 2 caracteres (sin contar espacios extremos)."""
+    texto_limpio = (texto or "").strip()
+    if len(texto_limpio) < LONGITUD_MINIMA_BUSQUEDA:
+        raise ErrorAplicacion(400, "El texto de búsqueda debe tener al menos 2 caracteres")
+    return texto_limpio
+
+
 def validar_paginacion(page: int, size: int) -> None:
     """HU-20: page >= 0 y size entre 1 y 100."""
     if size < 1 or size > TAMANO_PAGINA_MAXIMO:
