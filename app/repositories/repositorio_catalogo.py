@@ -1,7 +1,13 @@
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.domain.catalogo import ESTADOS_PUBLICADOS, Juego, PlataformaJuego
+from app.domain.catalogo import (
+    ESTADO_ESTRENO,
+    ESTADO_PREVENTA,
+    ESTADOS_PUBLICADOS,
+    Juego,
+    PlataformaJuego,
+)
 
 
 class RepositorioCatalogo:
@@ -30,6 +36,16 @@ class RepositorioCatalogo:
             Juego.plataformas.any(PlataformaJuego.plataforma == plataforma)
         )
         return self._paginar(consulta, page, size)
+
+    def listar_destacados(self, sesion: Session, limite: int) -> list[Juego]:
+        """HU-19: juegos publicados con marca destacado o en ESTRENO/PREVENTA, por lanzamiento descendente."""
+        return (
+            self._consulta_publicados(sesion)
+            .filter(or_(Juego.destacado.is_(True), Juego.estado.in_((ESTADO_ESTRENO, ESTADO_PREVENTA))))
+            .order_by(Juego.fecha_lanzamiento.is_(None), Juego.fecha_lanzamiento.desc(), Juego.id.desc())
+            .limit(limite)
+            .all()
+        )
 
     def listar_publicados(self, sesion: Session, page: int, size: int) -> tuple[list[Juego], int]:
         """HU-20: juegos en PREVENTA, ESTRENO o ACTIVO, paginados y ordenados por título."""

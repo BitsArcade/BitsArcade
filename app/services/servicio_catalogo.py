@@ -1,7 +1,13 @@
 from sqlalchemy.orm import Session
 
 from app.core.respuestas import manejar_errores_bd, respuesta
-from app.domain.catalogo import juego_a_item, validar_paginacion, validar_plataforma, validar_texto_busqueda
+from app.domain.catalogo import (
+    juego_a_item,
+    validar_limite_destacados,
+    validar_paginacion,
+    validar_plataforma,
+    validar_texto_busqueda,
+)
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
 
 
@@ -43,3 +49,12 @@ class ServicioCatalogo:
         if total == 0:
             return respuesta("No existen juegos para la plataforma indicada", _pagina([], page, size, 0), False)
         return respuesta("Filtrado por plataforma exitoso", _pagina(juegos, page, size, total))
+
+    def listar_destacados(self, sesion: Session, limite: int) -> dict:
+        """HU-19: destacados y novedades definidos solo con atributos del catálogo."""
+        validar_limite_destacados(limite)
+        with manejar_errores_bd("No fue posible consultar los destacados"):
+            juegos = self.repositorio.listar_destacados(sesion, limite)
+        if not juegos:
+            return respuesta("No existen juegos destacados", [], False)
+        return respuesta("Consulta de destacados exitosa", [juego_a_item(j) for j in juegos])

@@ -3,7 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.core.base_datos import get_db
 from app.core.respuestas import Respuesta
-from app.domain.catalogo import TAMANO_PAGINA_POR_DEFECTO, PaginaJuegosSalida
+from app.domain.catalogo import (
+    LIMITE_DESTACADOS_POR_DEFECTO,
+    TAMANO_PAGINA_POR_DEFECTO,
+    JuegoResumenSalida,
+    PaginaJuegosSalida,
+)
 from app.services.servicio_catalogo import ServicioCatalogo
 
 enrutador_catalogo = APIRouter(
@@ -36,6 +41,24 @@ def buscar_juegos_por_nombre(
     Ejemplo: `GET /api/v1/catalogo/juegos/buscar?q=aurora`.
     """
     return servicio_catalogo.buscar_por_nombre(sesion, q, page, size)
+
+
+@enrutador_catalogo.get(
+    "/juegos/destacados",
+    response_model=Respuesta[list[JuegoResumenSalida]],
+    responses={400: {"description": "limite debe estar entre 1 y 20"}, 503: ERROR_503},
+)
+def listar_juegos_destacados(
+    limite: int = Query(LIMITE_DESTACADOS_POR_DEFECTO, description="Cantidad máxima (1 a 20, por defecto 10)"),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-19: Listar juegos destacados y novedades.
+
+    Juegos publicados con marca `destacado` o en estado ESTRENO/PREVENTA, ordenados por
+    fecha de lanzamiento descendente. No usa datos de ventas.
+    """
+    return servicio_catalogo.listar_destacados(sesion, limite)
 
 
 @enrutador_catalogo.get(
