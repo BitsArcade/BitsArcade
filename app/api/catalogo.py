@@ -9,7 +9,9 @@ from app.domain.catalogo import (
     TAMANO_PAGINA_POR_DEFECTO,
     JuegoResumenSalida,
     MultimediaSalida,
+    ContratoCom11Salida,
     PaginaJuegosSalida,
+    PrecioSalida,
     RequisitosSalida,
 )
 from app.services.servicio_catalogo import ServicioCatalogo
@@ -17,6 +19,11 @@ from app.services.servicio_catalogo import ServicioCatalogo
 enrutador_catalogo = APIRouter(
     prefix="/api/v1/catalogo",
     tags=["MOD-02: Catálogo de Juegos (HU-16 a HU-25)"],
+)
+
+enrutador_catalogo_interno = APIRouter(
+    prefix="/internal/v1/catalogo",
+    tags=["Contratos Internos MOD-02 (COM-11)"],
 )
 
 servicio_catalogo = ServicioCatalogo()
@@ -139,3 +146,29 @@ def consultar_galeria_y_trailers(gameId: int, sesion: Session = Depends(get_db))
     API externa de video.
     """
     return servicio_catalogo.consultar_multimedia(sesion, gameId)
+
+
+@enrutador_catalogo.get(
+    "/juegos/{gameId}/precio",
+    response_model=Respuesta[PrecioSalida],
+    responses={
+        404: ERROR_404,
+        422: {"description": "El precio calculado viola la política de margen mínimo (RN-02)"},
+        503: {"description": "No fue posible obtener los parámetros financieros / calcular el precio"},
+    },
+)
+def consultar_precio_final(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-24: Calcular y consultar precio final público.
+
+    RN-01: `P_venta = C_A × (1 + M) × (1 + IVA)` con {taxRate, margin} vigentes de MOD-00 (COM-01).
+    RN-02: `P_venta >= C_A × (1 + IVA)`; si se viola responde 422. La respuesta no expone C_A
+    ni margen. Moneda de presentación: COP (moneda base del sistema).
+    """
+    return servicio_catalogo.consultar_precio_final(sesion, gameId)
+
+
+@enrutador_catalogo_interno.get("/juegos/{gameId}", response_model=ContratoCom11Salida)
+def obtener_juego_com11(gameId: int, sesion: Session = Depends(get_db)):
+    """COM-11: Entrega {exists, title, status, finalPrice, floorPrice} al módulo MOD-04 (Carrito)."""
+    return servicio_catalogo.obtener_contrato_com11(sesion, gameId)

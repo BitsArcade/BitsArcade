@@ -1,9 +1,13 @@
 from sqlalchemy.orm import Session
 
+from app.core.configuracion import settings
+
 from app.core.respuestas import ErrorAplicacion, manejar_errores_bd, respuesta
 from app.domain.catalogo import (
     MENSAJE_JUEGO_NO_EXISTE,
     agrupar_multimedia,
+    calcular_precio_final,
+    calcular_precio_piso,
     formatear_requisitos,
     juego_a_ficha_tecnica,
     juego_a_item,
@@ -13,6 +17,27 @@ from app.domain.catalogo import (
     validar_texto_busqueda,
 )
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
+from app.services.servicio_parametros import ServicioParametros
+
+MENSAJE_COM01_NO_DISPONIBLE = "No fue posible obtener los parámetros financieros"
+
+
+class ClienteParametrosFinancieros:
+    """
+    Adaptador del contrato COM-01 (proveedor MOD-00): {taxRate, margin} en formato decimal.
+    Hoy se resuelve en proceso con el servicio de MOD-00; si se separa en microservicios basta
+    con reemplazar este adaptador por un cliente HTTP a GET /internal/v1/parametros/financieros.
+    """
+
+    def __init__(self, servicio_parametros: ServicioParametros | None = None):
+        self.servicio_parametros = servicio_parametros or ServicioParametros()
+
+    def obtener(self, sesion: Session) -> dict:
+        try:
+            contrato = self.servicio_parametros.obtener_contrato_com01(sesion)
+            return {"taxRate": float(contrato["taxRate"]), "margin": float(contrato["margin"])}
+        except Exception as error:  # Cualquier fallo de COM-01 se trata como no disponible.
+            raise ErrorAplicacion(503, MENSAJE_COM01_NO_DISPONIBLE) from error
 
 
 def _pagina(juegos, page: int, size: int, total: int) -> dict:
@@ -24,6 +49,7 @@ class ServicioCatalogo:
 
     def __init__(self):
         self.repositorio = RepositorioCatalogo()
+        self.cliente_parametros = ClienteParametrosFinancieros()
 
     def consultar_catalogo(self, sesion: Session, page: int, size: int) -> dict:
         """HU-20: listado paginado de juegos publicados (sin C_A ni precio)."""
@@ -97,3 +123,38 @@ class ServicioCatalogo:
         if not datos["imagenes"] and not datos["videos"]:
             return respuesta("El juego no tiene material multimedia", datos, False)
         return respuesta("Consulta de multimedia exitosa", datos)
+
+    # --- HU-24: Precio final público y contrato COM-11 ---
+
+    def consultar_precio_final(self, sesion: Session, juego_id: int) -> dict:
+        """HU-24: aplica RN-01/RN-02 con los parámetros vigentes de COM-01 (una sola llamada)."""
+        juego = self._obtener_juego_publicado(sesion, juego_id, "No fue posible calcular el precio")
+        parametros = self.cliente_parametros.obtener(sesion)
+        precio_final = calcular_precio_final(juego.costo_adquisicion, parametros["margin"], parametros["taxRate"])
+        return respuesta(
+            "Consulta de precio exitosa",
+            {
+                "gameId": juego.id,
+                "moneda": settings.DEFAULT_CURRENCY,
+                "ivaPorcentaje": round(parametros["taxRate"] * 100, 2),
+                "precioFinal": precio_final,
+            },
+        )
+
+    def obtener_contrato_com11(self, sesion: Session, juego_id: int) -> dict:
+        """
+        COM-11 (proveedor MOD-02): {exists, title, status, finalPrice, floorPrice}
+        con floorPrice = C_A × (1 + IVA). Consumido por MOD-04 (Carrito).
+        """
+        with manejar_errores_bd("No fue posible calcular el precio"):
+            juego = self.repositorio.obtener_por_id(sesion, juego_id)
+        if juego is None:
+            return {"exists": False, "title": None, "status": None, "finalPrice": None, "floorPrice": None}
+        parametros = self.cliente_parametros.obtener(sesion)
+        return {
+            "exists": True,
+            "title": juego.titulo,
+            "status": juego.estado,
+            "finalPrice": calcular_precio_final(juego.costo_adquisicion, parametros["margin"], parametros["taxRate"]),
+            "floorPrice": calcular_precio_piso(juego.costo_adquisicion, parametros["taxRate"]),
+        }

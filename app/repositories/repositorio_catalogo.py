@@ -49,6 +49,10 @@ class RepositorioCatalogo:
             .all()
         )
 
+    def obtener_por_id(self, sesion: Session, juego_id: int) -> Juego | None:
+        """COM-11: juego por identificador en cualquier estado (incluido INACTIVO)."""
+        return sesion.query(Juego).filter(Juego.id == juego_id).first()
+
     def obtener_publicado_por_id(self, sesion: Session, juego_id: int) -> Juego | None:
         """HU-21: juego publicado (no INACTIVO) por su identificador."""
         return self._consulta_publicados(sesion).filter(Juego.id == juego_id).first()

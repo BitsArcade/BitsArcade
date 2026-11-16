@@ -63,6 +63,31 @@ def validar_paginacion(page: int, size: int) -> None:
         raise ErrorAplicacion(400, "page debe ser mayor o igual a 0")
 
 
+# ---------------------------------------------------------------------
+# HU-24: Política de precios. La fórmula vive ÚNICAMENTE en Catalogo.Domain;
+# MOD-04 (Carrito) la consume vía COM-11 y no la recalcula.
+# ---------------------------------------------------------------------
+
+MENSAJE_VIOLACION_RN02 = "El precio calculado viola la política de margen mínimo (RN-02)"
+
+
+def calcular_precio_piso(costo_adquisicion: float, tasa_iva: float) -> float:
+    """RN-02: precio mínimo permitido = C_A × (1 + IVA). tasa_iva en formato decimal (0.19)."""
+    return round(costo_adquisicion * (1 + tasa_iva), 2)
+
+
+def calcular_precio_final(costo_adquisicion: float, margen: float, tasa_iva: float) -> float:
+    """
+    RN-01: P_venta = C_A × (1 + M) × (1 + IVA)  (margen e IVA en formato decimal).
+    RN-02: P_venta >= C_A × (1 + IVA); si se viola se lanza 422.
+    """
+    precio_venta = costo_adquisicion * (1 + margen) * (1 + tasa_iva)
+    precio_piso = costo_adquisicion * (1 + tasa_iva)
+    if precio_venta + 1e-9 < precio_piso:
+        raise ErrorAplicacion(422, MENSAJE_VIOLACION_RN02)
+    return round(precio_venta, 2)
+
+
 # =====================================================================
 # 2. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
 # =====================================================================
@@ -246,3 +271,19 @@ class RequisitosSalida(BaseModel):
 class MultimediaSalida(BaseModel):
     imagenes: list[str]
     videos: list[str]
+
+
+class PrecioSalida(BaseModel):
+    gameId: int
+    moneda: str
+    ivaPorcentaje: float
+    precioFinal: float
+
+
+class ContratoCom11Salida(BaseModel):
+    """COM-11 (proveedor MOD-02 → consumidor MOD-04)."""
+    exists: bool
+    title: Optional[str] = None
+    status: Optional[str] = None
+    finalPrice: Optional[float] = None
+    floorPrice: Optional[float] = None
