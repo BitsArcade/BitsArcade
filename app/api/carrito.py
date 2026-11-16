@@ -64,3 +64,26 @@ def consultar_carrito_activo(
     (los descuentos los aplica HU-29). Si el carrito está vacío responde 200 con `success=false`.
     """
     return servicio_carrito.consultar_carrito(sesion, usuario)
+
+
+@enrutador_carrito.delete(
+    "/items/{itemId}",
+    response_model=Respuesta[CarritoSalida],
+    responses={
+        401: ERROR_401,
+        404: {"description": "El ítem no existe en tu carrito"},
+        503: {"description": "No fue posible eliminar el ítem"},
+    },
+)
+def eliminar_item_del_carrito(
+    itemId: int,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-28: Eliminar ítem del carrito.
+
+    Remueve el ítem del carrito del usuario autenticado (solo del propio carrito; un ítem de
+    otro usuario responde 404), recalcula los totales y retorna el carrito.
+    """
+    return servicio_carrito.eliminar_item(sesion, usuario, itemId)
