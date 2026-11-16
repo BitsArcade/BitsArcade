@@ -39,6 +39,25 @@ class RepositorioCatalogo:
         )
         return self._paginar(consulta, page, size)
 
+    def filtrar_por_genero_y_costo(
+        self,
+        sesion: Session,
+        genero: str | None,
+        costo_min: float | None,
+        costo_max: float | None,
+        page: int,
+        size: int,
+    ) -> tuple[list[Juego], int]:
+        """HU-18: juegos publicados por género (sin distinguir mayúsculas) y rango de costo base."""
+        consulta = self._consulta_publicados(sesion)
+        if genero:
+            consulta = consulta.filter(func.lower(Juego.genero) == genero.lower())
+        if costo_min is not None:
+            consulta = consulta.filter(Juego.costo_adquisicion >= costo_min)
+        if costo_max is not None:
+            consulta = consulta.filter(Juego.costo_adquisicion <= costo_max)
+        return self._paginar(consulta, page, size)
+
     def listar_destacados(self, sesion: Session, limite: int) -> list[Juego]:
         """HU-19: juegos publicados con marca destacado o en ESTRENO/PREVENTA, por lanzamiento descendente."""
         return (

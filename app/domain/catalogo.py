@@ -88,6 +88,29 @@ def calcular_precio_final(costo_adquisicion: float, margen: float, tasa_iva: flo
     return round(precio_venta, 2)
 
 
+def validar_rango_precios(precio_min: float | None, precio_max: float | None) -> None:
+    """HU-18: precios no negativos y precioMin <= precioMax."""
+    if (precio_min is not None and precio_min < 0) or (precio_max is not None and precio_max < 0):
+        raise ErrorAplicacion(400, "Los precios no pueden ser negativos")
+    if precio_min is not None and precio_max is not None and precio_min > precio_max:
+        raise ErrorAplicacion(400, "precioMin no puede ser mayor que precioMax")
+
+
+def convertir_rango_precio_a_costo(
+    precio_min: float | None, precio_max: float | None, margen: float, tasa_iva: float
+) -> tuple[float | None, float | None]:
+    """
+    HU-18: convierte el rango de precio final (RN-01) a rango de costo base:
+    C_A entre min / ((1+M)(1+IVA)) y max / ((1+M)(1+IVA)).
+    Se aplica una tolerancia mínima para no excluir por redondeo de punto flotante.
+    """
+    factor = (1 + margen) * (1 + tasa_iva)
+    tolerancia = 1e-6
+    costo_min = None if precio_min is None else precio_min / factor - tolerancia
+    costo_max = None if precio_max is None else precio_max / factor + tolerancia
+    return costo_min, costo_max
+
+
 # =====================================================================
 # 2. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
 # =====================================================================
@@ -235,6 +258,18 @@ class JuegoResumenSalida(BaseModel):
     genero: str
     plataformas: list[str]
     estado: str
+
+
+class JuegoConPrecioSalida(JuegoResumenSalida):
+    precioFinal: float
+    moneda: str
+
+
+class PaginaJuegosConPrecioSalida(BaseModel):
+    items: list[JuegoConPrecioSalida]
+    page: int
+    size: int
+    total: int
 
 
 class PaginaJuegosSalida(BaseModel):

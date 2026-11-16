@@ -8,12 +8,14 @@ from app.domain.catalogo import (
     agrupar_multimedia,
     calcular_precio_final,
     calcular_precio_piso,
+    convertir_rango_precio_a_costo,
     formatear_requisitos,
     juego_a_ficha_tecnica,
     juego_a_item,
     validar_limite_destacados,
     validar_paginacion,
     validar_plataforma,
+    validar_rango_precios,
     validar_texto_busqueda,
 )
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
@@ -158,3 +160,37 @@ class ServicioCatalogo:
             "finalPrice": calcular_precio_final(juego.costo_adquisicion, parametros["margin"], parametros["taxRate"]),
             "floorPrice": calcular_precio_piso(juego.costo_adquisicion, parametros["taxRate"]),
         }
+
+    # --- HU-18: Filtrado combinado por género y precio final ---
+
+    def filtrar_por_genero_y_precio(
+        self,
+        sesion: Session,
+        genero: str | None,
+        precio_min: float | None,
+        precio_max: float | None,
+        page: int,
+        size: int,
+    ) -> dict:
+        """HU-18: el filtro opera sobre el precio final (RN-01) con una sola llamada a COM-01."""
+        validar_rango_precios(precio_min, precio_max)
+        validar_paginacion(page, size)
+        parametros = self.cliente_parametros.obtener(sesion)
+        margen, tasa_iva = parametros["margin"], parametros["taxRate"]
+        costo_min, costo_max = convertir_rango_precio_a_costo(precio_min, precio_max, margen, tasa_iva)
+        genero_limpio = (genero or "").strip() or None
+        with manejar_errores_bd("No fue posible filtrar el catálogo"):
+            juegos, total = self.repositorio.filtrar_por_genero_y_costo(
+                sesion, genero_limpio, costo_min, costo_max, page, size
+            )
+        if total == 0:
+            return respuesta("No existen juegos con los filtros indicados", _pagina([], page, size, 0), False)
+        items = [
+            {
+                **juego_a_item(juego),
+                "precioFinal": calcular_precio_final(juego.costo_adquisicion, margen, tasa_iva),
+                "moneda": settings.DEFAULT_CURRENCY,
+            }
+            for juego in juegos
+        ]
+        return respuesta("Filtrado exitoso", {"items": items, "page": page, "size": size, "total": total})

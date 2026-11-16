@@ -10,6 +10,7 @@ from app.domain.catalogo import (
     JuegoResumenSalida,
     MultimediaSalida,
     ContratoCom11Salida,
+    PaginaJuegosConPrecioSalida,
     PaginaJuegosSalida,
     PrecioSalida,
     RequisitosSalida,
@@ -52,6 +53,32 @@ def buscar_juegos_por_nombre(
     Ejemplo: `GET /api/v1/catalogo/juegos/buscar?q=aurora`.
     """
     return servicio_catalogo.buscar_por_nombre(sesion, q, page, size)
+
+
+@enrutador_catalogo.get(
+    "/juegos/filtrar",
+    response_model=Respuesta[PaginaJuegosConPrecioSalida],
+    responses={
+        400: {"description": "precioMin no puede ser mayor que precioMax"},
+        503: {"description": "No fue posible obtener los parámetros financieros / filtrar el catálogo"},
+    },
+)
+def filtrar_por_genero_y_precio(
+    genero: str | None = Query(None, description="Género del juego (ej. RPG)"),
+    precioMin: float | None = Query(None, description="Precio final mínimo en COP"),
+    precioMax: float | None = Query(None, description="Precio final máximo en COP"),
+    page: int = Query(0, description="Número de página (desde 0)"),
+    size: int = Query(TAMANO_PAGINA_POR_DEFECTO, description="Tamaño de página (1 a 100)"),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-18: Filtrado combinado por género y precio.
+
+    El rango se expresa en precio final (RN-01) y se convierte a rango de costo base con los
+    parámetros vigentes de COM-01 (una sola llamada por petición). Cada ítem incluye `precioFinal`.
+    Ejemplo: `GET /api/v1/catalogo/juegos/filtrar?genero=RPG&precioMin=100000&precioMax=300000`.
+    """
+    return servicio_catalogo.filtrar_por_genero_y_precio(sesion, genero, precioMin, precioMax, page, size)
 
 
 @enrutador_catalogo.get(
