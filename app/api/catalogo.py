@@ -9,6 +9,7 @@ from app.domain.catalogo import (
     TAMANO_PAGINA_POR_DEFECTO,
     JuegoResumenSalida,
     PaginaJuegosSalida,
+    RequisitosSalida,
 )
 from app.services.servicio_catalogo import ServicioCatalogo
 
@@ -106,3 +107,19 @@ def consultar_ficha_tecnica(gameId: int, sesion: Session = Depends(get_db)):
     estado. No incluye costo de adquisición ni margen; el precio se obtiene con HU-24.
     """
     return servicio_catalogo.consultar_ficha_tecnica(sesion, gameId)
+
+
+@enrutador_catalogo.get(
+    "/juegos/{gameId}/requisitos",
+    response_model=Respuesta[RequisitosSalida],
+    responses={404: ERROR_404, 503: ERROR_503},
+)
+def consultar_requisitos_sistema(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-22: Ver requisitos del sistema.
+
+    Retorna los requisitos `minimos` y `recomendados` (so, procesador, memoria, grafica,
+    almacenamiento). Si el juego no tiene requisitos registrados (p. ej. juegos de consola)
+    responde 200 con `success=false` y un mensaje informativo.
+    """
+    return servicio_catalogo.consultar_requisitos(sesion, gameId)

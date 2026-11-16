@@ -107,6 +107,47 @@ class PlataformaJuego(Base):
     juego = relationship("Juego", back_populates="plataformas")
 
 
+REQUISITO_MINIMO = "MINIMO"
+REQUISITO_RECOMENDADO = "RECOMENDADO"
+
+
+class RequisitoSistema(Base):
+    """HU-22: requisitos de sistema (mínimos / recomendados) de un juego."""
+    __tablename__ = "juego_requisitos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    juego_id = Column(Integer, ForeignKey("juegos.id"), nullable=False, index=True)
+    tipo = Column(String(20), nullable=False)  # MINIMO | RECOMENDADO
+    so = Column(String(100), nullable=True)
+    procesador = Column(String(100), nullable=True)
+    memoria = Column(String(50), nullable=True)
+    grafica = Column(String(100), nullable=True)
+    almacenamiento = Column(String(50), nullable=True)
+
+
+def _requisito_a_dict(requisito: RequisitoSistema | None) -> dict | None:
+    if requisito is None:
+        return None
+    return {
+        "so": requisito.so,
+        "procesador": requisito.procesador,
+        "memoria": requisito.memoria,
+        "grafica": requisito.grafica,
+        "almacenamiento": requisito.almacenamiento,
+    }
+
+
+def formatear_requisitos(requisitos: list[RequisitoSistema]) -> dict | None:
+    """HU-22: agrupa los requisitos en {minimos, recomendados}; None si no hay registros."""
+    if not requisitos:
+        return None
+    por_tipo = {r.tipo.upper(): r for r in requisitos}
+    return {
+        "minimos": _requisito_a_dict(por_tipo.get(REQUISITO_MINIMO)),
+        "recomendados": _requisito_a_dict(por_tipo.get(REQUISITO_RECOMENDADO)),
+    }
+
+
 def juego_a_item(juego: Juego) -> dict:
     """Representación pública resumida de un juego (sin C_A ni precio)."""
     return {
@@ -163,3 +204,16 @@ class FichaTecnicaSalida(BaseModel):
     desarrollador: Optional[str] = None
     fechaLanzamiento: Optional[date] = None
     estado: str
+
+
+class EspecificacionSalida(BaseModel):
+    so: Optional[str] = None
+    procesador: Optional[str] = None
+    memoria: Optional[str] = None
+    grafica: Optional[str] = None
+    almacenamiento: Optional[str] = None
+
+
+class RequisitosSalida(BaseModel):
+    minimos: Optional[EspecificacionSalida] = None
+    recomendados: Optional[EspecificacionSalida] = None

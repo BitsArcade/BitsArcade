@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.core.respuestas import ErrorAplicacion, manejar_errores_bd, respuesta
 from app.domain.catalogo import (
     MENSAJE_JUEGO_NO_EXISTE,
+    formatear_requisitos,
     juego_a_ficha_tecnica,
     juego_a_item,
     validar_limite_destacados,
@@ -73,3 +74,14 @@ class ServicioCatalogo:
         """HU-21: ficha técnica completa sin costo de adquisición ni margen."""
         juego = self._obtener_juego_publicado(sesion, juego_id, "No fue posible consultar la ficha técnica")
         return respuesta("Consulta de ficha técnica exitosa", juego_a_ficha_tecnica(juego))
+
+    def consultar_requisitos(self, sesion: Session, juego_id: int) -> dict:
+        """HU-22: requisitos mínimos y recomendados; 200 informativo si no hay registros (p. ej. consola)."""
+        mensaje_error = "No fue posible consultar los requisitos"
+        self._obtener_juego_publicado(sesion, juego_id, mensaje_error)
+        with manejar_errores_bd(mensaje_error):
+            requisitos = self.repositorio.listar_requisitos(sesion, juego_id)
+        datos = formatear_requisitos(requisitos)
+        if datos is None:
+            return respuesta("El juego no tiene requisitos de sistema registrados", None, False)
+        return respuesta("Consulta de requisitos exitosa", datos)
