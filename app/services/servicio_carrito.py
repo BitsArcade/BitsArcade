@@ -128,3 +128,14 @@ class ServicioCarrito:
         with manejar_errores_bd(mensaje_error_bd):
             self.repositorio.guardar_item(sesion, carrito, datos.gameId, cantidad_total)
         return respuesta("Juego agregado al carrito", self._armar_carrito(sesion, carrito))
+
+    # --- HU-27: Consultar ítems del carrito activo ---
+
+    def consultar_carrito(self, sesion: Session, usuario: UsuarioAutenticado) -> dict:
+        """HU-27: ítems con precios vigentes de COM-11 y subtotal preliminar sin descuentos (HU-29)."""
+        with manejar_errores_bd("No fue posible consultar el carrito"):
+            carrito = self._obtener_o_crear_carrito(sesion, usuario.id)
+        datos = self._armar_carrito(sesion, carrito)
+        if not datos["items"]:
+            return respuesta("El carrito está vacío", datos, False)
+        return respuesta("Consulta de carrito exitosa", datos)
