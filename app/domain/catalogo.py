@@ -118,6 +118,23 @@ def juego_a_item(juego: Juego) -> dict:
     }
 
 
+def juego_a_ficha_tecnica(juego: Juego) -> dict:
+    """HU-21: ficha técnica pública. NO incluye costo de adquisición, margen ni precio."""
+    return {
+        "gameId": juego.id,
+        "titulo": juego.titulo,
+        "descripcion": juego.descripcion,
+        "genero": juego.genero,
+        "plataformas": juego.nombres_plataformas,
+        "desarrollador": juego.desarrollador,
+        "fechaLanzamiento": juego.fecha_lanzamiento.isoformat() if juego.fecha_lanzamiento else None,
+        "estado": juego.estado,
+    }
+
+
+MENSAJE_JUEGO_NO_EXISTE = "El juego indicado no existe"
+
+
 # =====================================================================
 # 3. ESQUEMAS DE SALIDA (Pydantic DTOs para Swagger)
 # =====================================================================
@@ -135,3 +152,14 @@ class PaginaJuegosSalida(BaseModel):
     page: int
     size: int
     total: int
+
+
+class FichaTecnicaSalida(BaseModel):
+    gameId: int
+    titulo: str
+    descripcion: Optional[str] = None
+    genero: str
+    plataformas: list[str]
+    desarrollador: Optional[str] = None
+    fechaLanzamiento: Optional[date] = None
+    estado: str

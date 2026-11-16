@@ -1,7 +1,9 @@
 from sqlalchemy.orm import Session
 
-from app.core.respuestas import manejar_errores_bd, respuesta
+from app.core.respuestas import ErrorAplicacion, manejar_errores_bd, respuesta
 from app.domain.catalogo import (
+    MENSAJE_JUEGO_NO_EXISTE,
+    juego_a_ficha_tecnica,
     juego_a_item,
     validar_limite_destacados,
     validar_paginacion,
@@ -58,3 +60,16 @@ class ServicioCatalogo:
         if not juegos:
             return respuesta("No existen juegos destacados", [], False)
         return respuesta("Consulta de destacados exitosa", [juego_a_item(j) for j in juegos])
+
+    def _obtener_juego_publicado(self, sesion: Session, juego_id: int, mensaje_error_bd: str):
+        """Obtiene un juego publicado o lanza 404; los fallos de BD se traducen a 503."""
+        with manejar_errores_bd(mensaje_error_bd):
+            juego = self.repositorio.obtener_publicado_por_id(sesion, juego_id)
+        if juego is None:
+            raise ErrorAplicacion(404, MENSAJE_JUEGO_NO_EXISTE)
+        return juego
+
+    def consultar_ficha_tecnica(self, sesion: Session, juego_id: int) -> dict:
+        """HU-21: ficha técnica completa sin costo de adquisición ni margen."""
+        juego = self._obtener_juego_publicado(sesion, juego_id, "No fue posible consultar la ficha técnica")
+        return respuesta("Consulta de ficha técnica exitosa", juego_a_ficha_tecnica(juego))

@@ -5,6 +5,7 @@ from app.core.base_datos import get_db
 from app.core.respuestas import Respuesta
 from app.domain.catalogo import (
     LIMITE_DESTACADOS_POR_DEFECTO,
+    FichaTecnicaSalida,
     TAMANO_PAGINA_POR_DEFECTO,
     JuegoResumenSalida,
     PaginaJuegosSalida,
@@ -19,6 +20,7 @@ enrutador_catalogo = APIRouter(
 servicio_catalogo = ServicioCatalogo()
 
 ERROR_503 = {"description": "La base de datos no está disponible"}
+ERROR_404 = {"description": "El juego indicado no existe"}
 
 
 # Nota: las rutas estáticas (/juegos/buscar, ...) se declaran antes de /juegos/{gameId}.
@@ -89,3 +91,18 @@ def consultar_catalogo(
     if plataforma is not None:
         return servicio_catalogo.filtrar_por_plataforma(sesion, plataforma, page, size)
     return servicio_catalogo.consultar_catalogo(sesion, page, size)
+
+
+@enrutador_catalogo.get(
+    "/juegos/{gameId}",
+    response_model=Respuesta[FichaTecnicaSalida],
+    responses={404: ERROR_404, 503: ERROR_503},
+)
+def consultar_ficha_tecnica(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-21: Consultar detalles de ficha técnica.
+
+    Retorna título, descripción, género, plataformas, desarrollador, fecha de lanzamiento y
+    estado. No incluye costo de adquisición ni margen; el precio se obtiene con HU-24.
+    """
+    return servicio_catalogo.consultar_ficha_tecnica(sesion, gameId)

@@ -47,6 +47,10 @@ class RepositorioCatalogo:
             .all()
         )
 
+    def obtener_publicado_por_id(self, sesion: Session, juego_id: int) -> Juego | None:
+        """HU-21: juego publicado (no INACTIVO) por su identificador."""
+        return self._consulta_publicados(sesion).filter(Juego.id == juego_id).first()
+
     def listar_publicados(self, sesion: Session, page: int, size: int) -> tuple[list[Juego], int]:
         """HU-20: juegos en PREVENTA, ESTRENO o ACTIVO, paginados y ordenados por título."""
         return self._paginar(self._consulta_publicados(sesion), page, size)
