@@ -51,6 +51,42 @@ def validar_stock_suficiente(cantidad_solicitada: int, disponibles: int) -> None
         raise ErrorAplicacion(409, MENSAJE_STOCK_INSUFICIENTE)
 
 
+# ---------------------------------------------------------------------
+# HU-29: Descuento progresivo por volumen (RN-08). Configuración estática de Carrito.Domain.
+# ---------------------------------------------------------------------
+
+ESTADO_JUEGO_ESTRENO = "ESTRENO"
+UMBRAL_DESCUENTO_VOLUMEN = 3          # cantidad mínima para aplicar RN-08
+PORCENTAJE_DESCUENTO_VOLUMEN = 0.10   # 10 % por unidad
+# RN-07: no se aplican descuentos a juegos en PREVENTA o ESTRENO (no existen cupones en el alcance).
+ESTADOS_SIN_DESCUENTO = (ESTADO_JUEGO_PREVENTA, ESTADO_JUEGO_ESTRENO)
+
+
+def validar_cantidad_actualizar(cantidad: int) -> None:
+    """HU-29: cantidad >= 1; para retirar el ítem se usa DELETE (HU-28)."""
+    if cantidad is None or cantidad < 1:
+        raise ErrorAplicacion(400, "cantidad debe ser mayor o igual a 1. Use DELETE para retirar el ítem")
+
+
+def calcular_desglose(precio_unitario: float, precio_piso: float, cantidad: int, estado_juego: str) -> dict:
+    """
+    HU-29: desglose monetario de un ítem.
+    - RN-07: PREVENTA / ESTRENO sin descuentos.
+    - RN-08: si el juego está ACTIVO y cantidad >= umbral, descuento del 10 % por unidad.
+    - RN-02: ningún precio unitario con descuento puede ser menor que floorPrice.
+    """
+    descuento_unitario = 0.0
+    if estado_juego not in ESTADOS_SIN_DESCUENTO and cantidad >= UMBRAL_DESCUENTO_VOLUMEN:
+        descuento_unitario = precio_unitario * PORCENTAJE_DESCUENTO_VOLUMEN
+        descuento_unitario = min(descuento_unitario, max(precio_unitario - precio_piso, 0.0))
+    descuento_total = round(descuento_unitario * cantidad, 2)
+    return {
+        "precioUnitario": round(precio_unitario, 2),
+        "descuentoVolumen": descuento_total,
+        "subtotal": round(precio_unitario * cantidad - descuento_total, 2),
+    }
+
+
 # =====================================================================
 # 2. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
 # =====================================================================
@@ -110,5 +146,22 @@ class ItemCarritoSalida(BaseModel):
 class CarritoSalida(BaseModel):
     carritoId: int
     items: list[ItemCarritoSalida]
+    subtotal: float
+    moneda: str
+
+
+class ActualizarCantidadEntrada(BaseModel):
+    """Contrato de entrada de HU-29."""
+    cantidad: int
+
+    model_config = {"json_schema_extra": {"examples": [{"cantidad": 3}]}}
+
+
+class DesgloseItemSalida(BaseModel):
+    itemId: int
+    gameId: int
+    cantidad: int
+    precioUnitario: float
+    descuentoVolumen: float
     subtotal: float
     moneda: str

@@ -6,7 +6,10 @@ from app.core.seguridad import UsuarioAutenticado
 from app.domain.carrito import (
     MENSAJE_ITEM_NO_EXISTE,
     AgregarItemEntrada,
+    ActualizarCantidadEntrada,
     Carrito,
+    calcular_desglose,
+    validar_cantidad_actualizar,
     validar_cantidad_agregar,
     validar_juego_vendible,
     validar_limite_preventa,
@@ -151,3 +154,36 @@ class ServicioCarrito:
                 raise ErrorAplicacion(404, MENSAJE_ITEM_NO_EXISTE)
             carrito = self.repositorio.eliminar_item(sesion, item)
         return respuesta("Ítem eliminado del carrito", self._armar_carrito(sesion, carrito))
+
+    # --- HU-29: Recalcular subtotales con promociones y volumen ---
+
+    def actualizar_cantidad(
+        self, sesion: Session, usuario: UsuarioAutenticado, item_id: int, datos: ActualizarCantidadEntrada
+    ) -> dict:
+        """HU-29: cambia la cantidad y retorna el desglose con RN-07, RN-05, RN-08 y RN-02."""
+        validar_cantidad_actualizar(datos.cantidad)
+        mensaje_error_bd = "No fue posible recalcular los subtotales"
+        with manejar_errores_bd(mensaje_error_bd):
+            item = self.repositorio.obtener_item_de_usuario(sesion, item_id, usuario.id)
+        if item is None:
+            raise ErrorAplicacion(404, MENSAJE_ITEM_NO_EXISTE)
+
+        contrato = self.cliente_catalogo.obtener_juego(sesion, item.juego_id)
+        validar_juego_vendible(contrato)
+        self._validar_reglas_cantidad(sesion, usuario.id, item.juego_id, contrato["status"], datos.cantidad)
+
+        with manejar_errores_bd(mensaje_error_bd):
+            item = self.repositorio.actualizar_cantidad(sesion, item, datos.cantidad)
+        desglose = calcular_desglose(
+            float(contrato["finalPrice"]), float(contrato["floorPrice"]), item.cantidad, contrato["status"]
+        )
+        return respuesta(
+            "Subtotales recalculados",
+            {
+                "itemId": item.id,
+                "gameId": item.juego_id,
+                "cantidad": item.cantidad,
+                **desglose,
+                "moneda": settings.DEFAULT_CURRENCY,
+            },
+        )
