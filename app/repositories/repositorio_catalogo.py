@@ -1,7 +1,7 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.domain.catalogo import ESTADOS_PUBLICADOS, Juego
+from app.domain.catalogo import ESTADOS_PUBLICADOS, Juego, PlataformaJuego
 
 
 class RepositorioCatalogo:
@@ -19,6 +19,15 @@ class RepositorioCatalogo:
         """HU-16: coincidencia parcial sin distinguir mayúsculas, solo juegos publicados."""
         consulta = self._consulta_publicados(sesion).filter(
             func.lower(Juego.titulo).contains(texto.lower(), autoescape=True)
+        )
+        return self._paginar(consulta, page, size)
+
+    def filtrar_por_plataforma(
+        self, sesion: Session, plataforma: str, page: int, size: int
+    ) -> tuple[list[Juego], int]:
+        """HU-17: juegos publicados asociados a la plataforma, en orden alfabético por título."""
+        consulta = self._consulta_publicados(sesion).filter(
+            Juego.plataformas.any(PlataformaJuego.plataforma == plataforma)
         )
         return self._paginar(consulta, page, size)
 

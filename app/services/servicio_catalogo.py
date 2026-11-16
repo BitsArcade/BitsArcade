@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.respuestas import manejar_errores_bd, respuesta
-from app.domain.catalogo import juego_a_item, validar_paginacion, validar_texto_busqueda
+from app.domain.catalogo import juego_a_item, validar_paginacion, validar_plataforma, validar_texto_busqueda
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
 
 
@@ -33,3 +33,13 @@ class ServicioCatalogo:
         if total == 0:
             return respuesta("No se encontraron juegos para la búsqueda", _pagina([], page, size, 0), False)
         return respuesta("Búsqueda exitosa", _pagina(juegos, page, size, total))
+
+    def filtrar_por_plataforma(self, sesion: Session, plataforma: str, page: int, size: int) -> dict:
+        """HU-17: filtra el catálogo publicado por plataforma (PC / CONSOLA), orden alfabético."""
+        plataforma_valida = validar_plataforma(plataforma)
+        validar_paginacion(page, size)
+        with manejar_errores_bd("No fue posible filtrar el catálogo"):
+            juegos, total = self.repositorio.filtrar_por_plataforma(sesion, plataforma_valida, page, size)
+        if total == 0:
+            return respuesta("No existen juegos para la plataforma indicada", _pagina([], page, size, 0), False)
+        return respuesta("Filtrado por plataforma exitoso", _pagina(juegos, page, size, total))

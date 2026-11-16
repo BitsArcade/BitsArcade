@@ -37,6 +37,14 @@ def validar_texto_busqueda(texto: str | None) -> str:
     return texto_limpio
 
 
+def validar_plataforma(plataforma: str) -> str:
+    """HU-17: valores válidos PC o CONSOLA (no distingue mayúsculas)."""
+    valor = (plataforma or "").strip().upper()
+    if valor not in PLATAFORMAS_VALIDAS:
+        raise ErrorAplicacion(400, "Plataforma no válida. Use PC o CONSOLA")
+    return valor
+
+
 def validar_paginacion(page: int, size: int) -> None:
     """HU-20: page >= 0 y size entre 1 y 100."""
     if size < 1 or size > TAMANO_PAGINA_MAXIMO:

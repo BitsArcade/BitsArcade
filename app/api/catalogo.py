@@ -41,9 +41,13 @@ def buscar_juegos_por_nombre(
 @enrutador_catalogo.get(
     "/juegos",
     response_model=Respuesta[PaginaJuegosSalida],
-    responses={400: {"description": "size debe estar entre 1 y 100"}, 503: ERROR_503},
+    responses={
+        400: {"description": "size debe estar entre 1 y 100 / Plataforma no válida. Use PC o CONSOLA"},
+        503: ERROR_503,
+    },
 )
 def consultar_catalogo(
+    plataforma: str | None = Query(None, description="HU-17: filtrar por plataforma (PC o CONSOLA)"),
     page: int = Query(0, description="Número de página (desde 0)"),
     size: int = Query(TAMANO_PAGINA_POR_DEFECTO, description="Tamaño de página (1 a 100)"),
     sesion: Session = Depends(get_db),
@@ -54,5 +58,11 @@ def consultar_catalogo(
     Retorna el listado paginado de juegos publicados (PREVENTA, ESTRENO, ACTIVO).
     Los juegos INACTIVO se excluyen. No se expone el costo de adquisición ni el precio
     (el precio final se consulta en HU-24).
+
+    HU-17: Filtrar catálogo por plataforma. Si se envía `plataforma` (PC o CONSOLA) se
+    retornan solo los juegos asociados a ella, en orden alfabético por título.
+    Ejemplo: `GET /api/v1/catalogo/juegos?plataforma=PC`.
     """
+    if plataforma is not None:
+        return servicio_catalogo.filtrar_por_plataforma(sesion, plataforma, page, size)
     return servicio_catalogo.consultar_catalogo(sesion, page, size)
