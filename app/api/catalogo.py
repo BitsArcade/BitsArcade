@@ -8,6 +8,7 @@ from app.domain.catalogo import (
     FichaTecnicaSalida,
     TAMANO_PAGINA_POR_DEFECTO,
     JuegoResumenSalida,
+    MultimediaSalida,
     PaginaJuegosSalida,
     RequisitosSalida,
 )
@@ -123,3 +124,18 @@ def consultar_requisitos_sistema(gameId: int, sesion: Session = Depends(get_db))
     responde 200 con `success=false` y un mensaje informativo.
     """
     return servicio_catalogo.consultar_requisitos(sesion, gameId)
+
+
+@enrutador_catalogo.get(
+    "/juegos/{gameId}/multimedia",
+    response_model=Respuesta[MultimediaSalida],
+    responses={404: ERROR_404, 503: ERROR_503},
+)
+def consultar_galeria_y_trailers(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-23: Visualizar galería y trailers.
+
+    Retorna las URLs almacenadas agrupadas en `imagenes` y `videos`. No se integra ninguna
+    API externa de video.
+    """
+    return servicio_catalogo.consultar_multimedia(sesion, gameId)

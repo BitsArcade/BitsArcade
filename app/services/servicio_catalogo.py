@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.core.respuestas import ErrorAplicacion, manejar_errores_bd, respuesta
 from app.domain.catalogo import (
     MENSAJE_JUEGO_NO_EXISTE,
+    agrupar_multimedia,
     formatear_requisitos,
     juego_a_ficha_tecnica,
     juego_a_item,
@@ -85,3 +86,14 @@ class ServicioCatalogo:
         if datos is None:
             return respuesta("El juego no tiene requisitos de sistema registrados", None, False)
         return respuesta("Consulta de requisitos exitosa", datos)
+
+    def consultar_multimedia(self, sesion: Session, juego_id: int) -> dict:
+        """HU-23: solo URLs almacenadas; no se integra ninguna API externa de video."""
+        mensaje_error = "No fue posible consultar el material multimedia"
+        self._obtener_juego_publicado(sesion, juego_id, mensaje_error)
+        with manejar_errores_bd(mensaje_error):
+            recursos = self.repositorio.listar_multimedia(sesion, juego_id)
+        datos = agrupar_multimedia(recursos)
+        if not datos["imagenes"] and not datos["videos"]:
+            return respuesta("El juego no tiene material multimedia", datos, False)
+        return respuesta("Consulta de multimedia exitosa", datos)

@@ -6,6 +6,7 @@ from app.domain.catalogo import (
     ESTADO_PREVENTA,
     ESTADOS_PUBLICADOS,
     Juego,
+    MultimediaJuego,
     PlataformaJuego,
     RequisitoSistema,
 )
@@ -55,6 +56,10 @@ class RepositorioCatalogo:
     def listar_requisitos(self, sesion: Session, juego_id: int) -> list[RequisitoSistema]:
         """HU-22: requisitos de sistema registrados para el juego."""
         return sesion.query(RequisitoSistema).filter(RequisitoSistema.juego_id == juego_id).all()
+
+    def listar_multimedia(self, sesion: Session, juego_id: int) -> list[MultimediaJuego]:
+        """HU-23: enlaces multimedia almacenados para el juego."""
+        return sesion.query(MultimediaJuego).filter(MultimediaJuego.juego_id == juego_id).all()
 
     def listar_publicados(self, sesion: Session, page: int, size: int) -> tuple[list[Juego], int]:
         """HU-20: juegos en PREVENTA, ESTRENO o ACTIVO, paginados y ordenados por título."""

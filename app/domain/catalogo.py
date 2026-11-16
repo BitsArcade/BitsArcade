@@ -148,6 +148,30 @@ def formatear_requisitos(requisitos: list[RequisitoSistema]) -> dict | None:
     }
 
 
+MULTIMEDIA_IMAGEN = "IMAGEN"
+MULTIMEDIA_VIDEO = "VIDEO"
+
+
+class MultimediaJuego(Base):
+    """HU-23: URLs almacenadas de imágenes y videos (trailers) de un juego."""
+    __tablename__ = "juego_multimedia"
+
+    id = Column(Integer, primary_key=True, index=True)
+    juego_id = Column(Integer, ForeignKey("juegos.id"), nullable=False, index=True)
+    tipo = Column(String(10), nullable=False)  # IMAGEN | VIDEO
+    url = Column(String(500), nullable=False)
+    orden = Column(Integer, nullable=False, default=0)
+
+
+def agrupar_multimedia(recursos: list[MultimediaJuego]) -> dict:
+    """HU-23: agrupa las URLs almacenadas en {imagenes, videos} respetando el orden."""
+    ordenados = sorted(recursos, key=lambda r: (r.orden or 0, r.id or 0))
+    return {
+        "imagenes": [r.url for r in ordenados if r.tipo.upper() == MULTIMEDIA_IMAGEN],
+        "videos": [r.url for r in ordenados if r.tipo.upper() == MULTIMEDIA_VIDEO],
+    }
+
+
 def juego_a_item(juego: Juego) -> dict:
     """Representación pública resumida de un juego (sin C_A ni precio)."""
     return {
@@ -217,3 +241,8 @@ class EspecificacionSalida(BaseModel):
 class RequisitosSalida(BaseModel):
     minimos: Optional[EspecificacionSalida] = None
     recomendados: Optional[EspecificacionSalida] = None
+
+
+class MultimediaSalida(BaseModel):
+    imagenes: list[str]
+    videos: list[str]
