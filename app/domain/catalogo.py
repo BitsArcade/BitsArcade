@@ -63,6 +63,54 @@ def validar_paginacion(page: int, size: int) -> None:
         raise ErrorAplicacion(400, "page debe ser mayor o igual a 0")
 
 
+# ---------------------------------------------------------------------
+# HU-24: Política de precios. La fórmula vive ÚNICAMENTE en Catalogo.Domain;
+# MOD-04 (Carrito) la consume vía COM-11 y no la recalcula.
+# ---------------------------------------------------------------------
+
+MENSAJE_VIOLACION_RN02 = "El precio calculado viola la política de margen mínimo (RN-02)"
+
+
+def calcular_precio_piso(costo_adquisicion: float, tasa_iva: float) -> float:
+    """RN-02: precio mínimo permitido = C_A × (1 + IVA). tasa_iva en formato decimal (0.19)."""
+    return round(costo_adquisicion * (1 + tasa_iva), 2)
+
+
+def calcular_precio_final(costo_adquisicion: float, margen: float, tasa_iva: float) -> float:
+    """
+    RN-01: P_venta = C_A × (1 + M) × (1 + IVA)  (margen e IVA en formato decimal).
+    RN-02: P_venta >= C_A × (1 + IVA); si se viola se lanza 422.
+    """
+    precio_venta = costo_adquisicion * (1 + margen) * (1 + tasa_iva)
+    precio_piso = costo_adquisicion * (1 + tasa_iva)
+    if precio_venta + 1e-9 < precio_piso:
+        raise ErrorAplicacion(422, MENSAJE_VIOLACION_RN02)
+    return round(precio_venta, 2)
+
+
+def validar_rango_precios(precio_min: float | None, precio_max: float | None) -> None:
+    """HU-18: precios no negativos y precioMin <= precioMax."""
+    if (precio_min is not None and precio_min < 0) or (precio_max is not None and precio_max < 0):
+        raise ErrorAplicacion(400, "Los precios no pueden ser negativos")
+    if precio_min is not None and precio_max is not None and precio_min > precio_max:
+        raise ErrorAplicacion(400, "precioMin no puede ser mayor que precioMax")
+
+
+def convertir_rango_precio_a_costo(
+    precio_min: float | None, precio_max: float | None, margen: float, tasa_iva: float
+) -> tuple[float | None, float | None]:
+    """
+    HU-18: convierte el rango de precio final (RN-01) a rango de costo base:
+    C_A entre min / ((1+M)(1+IVA)) y max / ((1+M)(1+IVA)).
+    Se aplica una tolerancia mínima para no excluir por redondeo de punto flotante.
+    """
+    factor = (1 + margen) * (1 + tasa_iva)
+    tolerancia = 1e-6
+    costo_min = None if precio_min is None else precio_min / factor - tolerancia
+    costo_max = None if precio_max is None else precio_max / factor + tolerancia
+    return costo_min, costo_max
+
+
 # =====================================================================
 # 2. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
 # =====================================================================
@@ -107,6 +155,71 @@ class PlataformaJuego(Base):
     juego = relationship("Juego", back_populates="plataformas")
 
 
+REQUISITO_MINIMO = "MINIMO"
+REQUISITO_RECOMENDADO = "RECOMENDADO"
+
+
+class RequisitoSistema(Base):
+    """HU-22: requisitos de sistema (mínimos / recomendados) de un juego."""
+    __tablename__ = "juego_requisitos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    juego_id = Column(Integer, ForeignKey("juegos.id"), nullable=False, index=True)
+    tipo = Column(String(20), nullable=False)  # MINIMO | RECOMENDADO
+    so = Column(String(100), nullable=True)
+    procesador = Column(String(100), nullable=True)
+    memoria = Column(String(50), nullable=True)
+    grafica = Column(String(100), nullable=True)
+    almacenamiento = Column(String(50), nullable=True)
+
+
+def _requisito_a_dict(requisito: RequisitoSistema | None) -> dict | None:
+    if requisito is None:
+        return None
+    return {
+        "so": requisito.so,
+        "procesador": requisito.procesador,
+        "memoria": requisito.memoria,
+        "grafica": requisito.grafica,
+        "almacenamiento": requisito.almacenamiento,
+    }
+
+
+def formatear_requisitos(requisitos: list[RequisitoSistema]) -> dict | None:
+    """HU-22: agrupa los requisitos en {minimos, recomendados}; None si no hay registros."""
+    if not requisitos:
+        return None
+    por_tipo = {r.tipo.upper(): r for r in requisitos}
+    return {
+        "minimos": _requisito_a_dict(por_tipo.get(REQUISITO_MINIMO)),
+        "recomendados": _requisito_a_dict(por_tipo.get(REQUISITO_RECOMENDADO)),
+    }
+
+
+MULTIMEDIA_IMAGEN = "IMAGEN"
+MULTIMEDIA_VIDEO = "VIDEO"
+
+
+class MultimediaJuego(Base):
+    """HU-23: URLs almacenadas de imágenes y videos (trailers) de un juego."""
+    __tablename__ = "juego_multimedia"
+
+    id = Column(Integer, primary_key=True, index=True)
+    juego_id = Column(Integer, ForeignKey("juegos.id"), nullable=False, index=True)
+    tipo = Column(String(10), nullable=False)  # IMAGEN | VIDEO
+    url = Column(String(500), nullable=False)
+    orden = Column(Integer, nullable=False, default=0)
+
+
+def agrupar_multimedia(recursos: list[MultimediaJuego]) -> dict:
+    """HU-23: agrupa las URLs almacenadas en {imagenes, videos} respetando el orden."""
+    ordenados = sorted(recursos, key=lambda r: (r.orden or 0, r.id or 0))
+    return {
+        "imagenes": [r.url for r in ordenados if r.tipo.upper() == MULTIMEDIA_IMAGEN],
+        "videos": [r.url for r in ordenados if r.tipo.upper() == MULTIMEDIA_VIDEO],
+    }
+
+
 def juego_a_item(juego: Juego) -> dict:
     """Representación pública resumida de un juego (sin C_A ni precio)."""
     return {
@@ -116,6 +229,23 @@ def juego_a_item(juego: Juego) -> dict:
         "plataformas": juego.nombres_plataformas,
         "estado": juego.estado,
     }
+
+
+def juego_a_ficha_tecnica(juego: Juego) -> dict:
+    """HU-21: ficha técnica pública. NO incluye costo de adquisición, margen ni precio."""
+    return {
+        "gameId": juego.id,
+        "titulo": juego.titulo,
+        "descripcion": juego.descripcion,
+        "genero": juego.genero,
+        "plataformas": juego.nombres_plataformas,
+        "desarrollador": juego.desarrollador,
+        "fechaLanzamiento": juego.fecha_lanzamiento.isoformat() if juego.fecha_lanzamiento else None,
+        "estado": juego.estado,
+    }
+
+
+MENSAJE_JUEGO_NO_EXISTE = "El juego indicado no existe"
 
 
 # =====================================================================
@@ -130,8 +260,65 @@ class JuegoResumenSalida(BaseModel):
     estado: str
 
 
+class JuegoConPrecioSalida(JuegoResumenSalida):
+    precioFinal: float
+    moneda: str
+
+
+class PaginaJuegosConPrecioSalida(BaseModel):
+    items: list[JuegoConPrecioSalida]
+    page: int
+    size: int
+    total: int
+
+
 class PaginaJuegosSalida(BaseModel):
     items: list[JuegoResumenSalida]
     page: int
     size: int
     total: int
+
+
+class FichaTecnicaSalida(BaseModel):
+    gameId: int
+    titulo: str
+    descripcion: Optional[str] = None
+    genero: str
+    plataformas: list[str]
+    desarrollador: Optional[str] = None
+    fechaLanzamiento: Optional[date] = None
+    estado: str
+
+
+class EspecificacionSalida(BaseModel):
+    so: Optional[str] = None
+    procesador: Optional[str] = None
+    memoria: Optional[str] = None
+    grafica: Optional[str] = None
+    almacenamiento: Optional[str] = None
+
+
+class RequisitosSalida(BaseModel):
+    minimos: Optional[EspecificacionSalida] = None
+    recomendados: Optional[EspecificacionSalida] = None
+
+
+class MultimediaSalida(BaseModel):
+    imagenes: list[str]
+    videos: list[str]
+
+
+class PrecioSalida(BaseModel):
+    gameId: int
+    moneda: str
+    ivaPorcentaje: float
+    precioFinal: float
+
+
+class ContratoCom11Salida(BaseModel):
+    """COM-11 (proveedor MOD-02 → consumidor MOD-04)."""
+    exists: bool
+    title: Optional[str] = None
+    status: Optional[str] = None
+    finalPrice: Optional[float] = None
+    floorPrice: Optional[float] = None
