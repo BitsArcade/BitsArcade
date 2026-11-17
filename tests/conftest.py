@@ -81,3 +81,33 @@ def crear_juego(sesion):
         return juego
 
     return _crear
+
+
+@pytest.fixture
+def crear_keys(sesion):
+    """Registra keys de inventario (modelo provisional de MOD-03 usado por COM-12)."""
+    from app.domain.inventario import KeyLicencia
+
+    def _crear(juego_id: int, disponibles: int = 0, estado_extra: str | None = None, cantidad_extra: int = 0):
+        sesion.add_all([KeyLicencia(juego_id=juego_id, estado="DISPONIBLE") for _ in range(disponibles)])
+        if estado_extra:
+            sesion.add_all([KeyLicencia(juego_id=juego_id, estado=estado_extra) for _ in range(cantidad_extra)])
+        sesion.commit()
+
+    return _crear
+
+
+def generar_token(usuario_id: int = 1, rol: str = "CLIENTE", minutos: int = 30, clave: str | None = None) -> str:
+    """Genera un JWT de prueba equivalente al emitido por MOD-01 (HU-07)."""
+    from datetime import datetime, timedelta, timezone
+
+    import jwt
+
+    from app.core.configuracion import settings
+
+    carga = {"sub": str(usuario_id), "rol": rol, "exp": datetime.now(timezone.utc) + timedelta(minutes=minutos)}
+    return jwt.encode(carga, clave or settings.SECRET_KEY, algorithm="HS256")
+
+
+def encabezado_auth(usuario_id: int = 1, **kwargs) -> dict:
+    return {"Authorization": f"Bearer {generar_token(usuario_id, **kwargs)}"}
