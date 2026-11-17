@@ -42,3 +42,25 @@ def agregar_juego_al_carrito(
     Si el juego ya estaba en el carrito acumula la cantidad. El userId sale del JWT.
     """
     return servicio_carrito.agregar_item(sesion, usuario, datos)
+
+
+@enrutador_carrito.get(
+    "",
+    response_model=Respuesta[CarritoSalida],
+    responses={
+        401: ERROR_401,
+        503: {"description": "No fue posible obtener los precios vigentes (COM-11) / consultar el carrito (BD)"},
+    },
+)
+def consultar_carrito_activo(
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-27: Consultar ítems del carrito activo.
+
+    Retorna los ítems del carrito del usuario del JWT con precios vigentes obtenidos del
+    Catálogo (COM-11; MOD-04 no recalcula RN-01) y el subtotal preliminar SIN descuentos
+    (los descuentos los aplica HU-29). Si el carrito está vacío responde 200 con `success=false`.
+    """
+    return servicio_carrito.consultar_carrito(sesion, usuario)
