@@ -45,6 +45,16 @@ def validar_plataforma(plataforma: str) -> str:
     return valor
 
 
+LIMITE_DESTACADOS_POR_DEFECTO = 10
+LIMITE_DESTACADOS_MAXIMO = 20
+
+
+def validar_limite_destacados(limite: int) -> None:
+    """HU-19: limite entre 1 y 20."""
+    if limite < 1 or limite > LIMITE_DESTACADOS_MAXIMO:
+        raise ErrorAplicacion(400, f"limite debe estar entre 1 y {LIMITE_DESTACADOS_MAXIMO}")
+
+
 def validar_paginacion(page: int, size: int) -> None:
     """HU-20: page >= 0 y size entre 1 y 100."""
     if size < 1 or size > TAMANO_PAGINA_MAXIMO:
@@ -68,6 +78,7 @@ class Juego(Base):
     desarrollador = Column(String(100), nullable=True)
     fecha_lanzamiento = Column(Date, nullable=True)
     estado = Column(String(20), nullable=False, default=ESTADO_ACTIVO)
+    # HU-19: marca editorial del propio catálogo (no depende de datos de ventas).
     destacado = Column(Boolean, nullable=False, default=False)
     # Costo de adquisición (C_A) en COP. Dato sensible: NUNCA se expone en respuestas públicas.
     costo_adquisicion = Column(Float, nullable=False, default=0.0)
