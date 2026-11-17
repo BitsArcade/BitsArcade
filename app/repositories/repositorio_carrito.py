@@ -38,3 +38,23 @@ class RepositorioCarrito:
         sesion.commit()
         sesion.refresh(carrito)
         return item
+
+    def obtener_item_de_usuario(self, sesion: Session, item_id: int, usuario_id: int) -> ItemCarrito | None:
+        """HU-28 / HU-29: ítem solo si pertenece al carrito ACTIVO del usuario."""
+        return (
+            sesion.query(ItemCarrito)
+            .join(Carrito, ItemCarrito.carrito_id == Carrito.id)
+            .filter(
+                ItemCarrito.id == item_id,
+                Carrito.usuario_id == usuario_id,
+                Carrito.estado == ESTADO_CARRITO_ACTIVO,
+            )
+            .first()
+        )
+
+    def eliminar_item(self, sesion: Session, item: ItemCarrito) -> Carrito:
+        carrito = item.carrito
+        sesion.delete(item)
+        sesion.commit()
+        sesion.refresh(carrito)
+        return carrito

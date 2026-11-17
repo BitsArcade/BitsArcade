@@ -4,6 +4,7 @@ from app.core.configuracion import settings
 from app.core.respuestas import ErrorAplicacion, manejar_errores_bd, respuesta
 from app.core.seguridad import UsuarioAutenticado
 from app.domain.carrito import (
+    MENSAJE_ITEM_NO_EXISTE,
     AgregarItemEntrada,
     Carrito,
     validar_cantidad_agregar,
@@ -139,3 +140,14 @@ class ServicioCarrito:
         if not datos["items"]:
             return respuesta("El carrito está vacío", datos, False)
         return respuesta("Consulta de carrito exitosa", datos)
+
+    # --- HU-28: Eliminar ítem del carrito ---
+
+    def eliminar_item(self, sesion: Session, usuario: UsuarioAutenticado, item_id: int) -> dict:
+        """HU-28: solo se eliminan ítems del propio carrito; retorna el carrito recalculado."""
+        with manejar_errores_bd("No fue posible eliminar el ítem"):
+            item = self.repositorio.obtener_item_de_usuario(sesion, item_id, usuario.id)
+            if item is None:
+                raise ErrorAplicacion(404, MENSAJE_ITEM_NO_EXISTE)
+            carrito = self.repositorio.eliminar_item(sesion, item)
+        return respuesta("Ítem eliminado del carrito", self._armar_carrito(sesion, carrito))
