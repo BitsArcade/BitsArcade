@@ -4,6 +4,7 @@ from app.core.base_datos import engine, Base
 from app.domain import parametros as modelos_parametros
 from app.api.parametros import enrutador_parametros, enrutador_interno
 from app.domain import catalogo as modelos_catalogo
+from app.domain import inventario as modelos_inventario
 from app.api.catalogo import enrutador_catalogo, enrutador_catalogo_interno
 from app.core.respuestas import registrar_manejadores_errores
 

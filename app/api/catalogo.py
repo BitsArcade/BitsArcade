@@ -14,6 +14,7 @@ from app.domain.catalogo import (
     PaginaJuegosSalida,
     PrecioSalida,
     RequisitosSalida,
+    StockSalida,
 )
 from app.services.servicio_catalogo import ServicioCatalogo
 
@@ -199,3 +200,21 @@ def consultar_precio_final(gameId: int, sesion: Session = Depends(get_db)):
 def obtener_juego_com11(gameId: int, sesion: Session = Depends(get_db)):
     """COM-11: Entrega {exists, title, status, finalPrice, floorPrice} al módulo MOD-04 (Carrito)."""
     return servicio_catalogo.obtener_contrato_com11(sesion, gameId)
+
+
+@enrutador_catalogo.get(
+    "/juegos/{gameId}/stock",
+    response_model=Respuesta[StockSalida],
+    responses={
+        404: ERROR_404,
+        503: {"description": "No fue posible verificar la disponibilidad (COM-12) / el stock (BD)"},
+    },
+)
+def verificar_disponibilidad_stock(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-25: Verificar disponibilidad de stock.
+
+    Consulta el stock a MOD-03 (COM-12) y retorna `DISPONIBLE` o `AGOTADO` sin exponer el
+    conteo exacto de keys. Si MOD-03 no responde se retorna 503 (nunca se asume DISPONIBLE).
+    """
+    return servicio_catalogo.verificar_stock(sesion, gameId)

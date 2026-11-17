@@ -111,6 +111,15 @@ def convertir_rango_precio_a_costo(
     return costo_min, costo_max
 
 
+STOCK_DISPONIBLE = "DISPONIBLE"
+STOCK_AGOTADO = "AGOTADO"
+
+
+def determinar_estado_stock(disponibles: int) -> str:
+    """HU-25: DISPONIBLE si hay al menos una key disponible; AGOTADO en caso contrario."""
+    return STOCK_DISPONIBLE if disponibles > 0 else STOCK_AGOTADO
+
+
 # =====================================================================
 # 2. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
 # =====================================================================
@@ -322,3 +331,8 @@ class ContratoCom11Salida(BaseModel):
     status: Optional[str] = None
     finalPrice: Optional[float] = None
     floorPrice: Optional[float] = None
+
+
+class StockSalida(BaseModel):
+    gameId: int
+    estado: str

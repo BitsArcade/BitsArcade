@@ -9,6 +9,7 @@ from app.domain.catalogo import (
     calcular_precio_final,
     calcular_precio_piso,
     convertir_rango_precio_a_costo,
+    determinar_estado_stock,
     formatear_requisitos,
     juego_a_ficha_tecnica,
     juego_a_item,
@@ -19,6 +20,11 @@ from app.domain.catalogo import (
     validar_texto_busqueda,
 )
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
+from app.services.cliente_inventario import (
+    MENSAJE_COM12_NO_DISPONIBLE,
+    ClienteInventario,
+    InventarioNoDisponible,
+)
 from app.services.servicio_parametros import ServicioParametros
 
 MENSAJE_COM01_NO_DISPONIBLE = "No fue posible obtener los parámetros financieros"
@@ -52,6 +58,7 @@ class ServicioCatalogo:
     def __init__(self):
         self.repositorio = RepositorioCatalogo()
         self.cliente_parametros = ClienteParametrosFinancieros()
+        self.cliente_inventario = ClienteInventario()
 
     def consultar_catalogo(self, sesion: Session, page: int, size: int) -> dict:
         """HU-20: listado paginado de juegos publicados (sin C_A ni precio)."""
@@ -194,3 +201,17 @@ class ServicioCatalogo:
             for juego in juegos
         ]
         return respuesta("Filtrado exitoso", {"items": items, "page": page, "size": size, "total": total})
+
+    # --- HU-25: Disponibilidad de stock (COM-12) ---
+
+    def verificar_stock(self, sesion: Session, juego_id: int) -> dict:
+        """HU-25: DISPONIBLE / AGOTADO sin exponer el conteo; si COM-12 falla responde 503."""
+        juego = self._obtener_juego_publicado(sesion, juego_id, "No fue posible verificar el stock")
+        try:
+            disponibles = self.cliente_inventario.contar_disponibles(sesion, juego.id)
+        except InventarioNoDisponible as error:
+            raise ErrorAplicacion(503, MENSAJE_COM12_NO_DISPONIBLE) from error
+        return respuesta(
+            "Consulta de stock exitosa",
+            {"gameId": juego.id, "estado": determinar_estado_stock(disponibles)},
+        )
