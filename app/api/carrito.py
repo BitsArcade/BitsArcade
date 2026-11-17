@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session
 from app.core.base_datos import get_db
 from app.core.respuestas import Respuesta
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
-from app.domain.carrito import AgregarItemEntrada, CarritoSalida
+from app.domain.carrito import (
+    ActualizarCantidadEntrada,
+    AgregarItemEntrada,
+    CarritoSalida,
+    DesgloseItemSalida,
+)
 from app.services.servicio_carrito import ServicioCarrito
 
 enrutador_carrito = APIRouter(
@@ -87,3 +92,31 @@ def eliminar_item_del_carrito(
     otro usuario responde 404), recalcula los totales y retorna el carrito.
     """
     return servicio_carrito.eliminar_item(sesion, usuario, itemId)
+
+
+@enrutador_carrito.patch(
+    "/items/{itemId}",
+    response_model=Respuesta[DesgloseItemSalida],
+    responses={
+        400: {"description": "cantidad debe ser mayor o igual a 1. Use DELETE para retirar el ítem"},
+        401: ERROR_401,
+        404: {"description": "El ítem no existe en tu carrito"},
+        409: {"description": "Stock insuficiente / Solo se permite una licencia por título en preventa"},
+        503: {"description": "No fue posible recalcular los subtotales"},
+    },
+)
+def recalcular_subtotales_item(
+    itemId: int,
+    datos: ActualizarCantidadEntrada,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-29: Recalcular subtotales con promociones y volumen.
+
+    Cambia la cantidad del ítem y retorna el desglose. Estado y precios vía COM-11.
+    RN-07: PREVENTA/ESTRENO sin descuentos. RN-05: máximo 1 licencia en preventa.
+    RN-08: juego ACTIVO con cantidad >= 3 recibe 10 % de descuento por unidad.
+    RN-02: ningún precio unitario con descuento baja de floorPrice.
+    """
+    return servicio_carrito.actualizar_cantidad(sesion, usuario, itemId, datos)

@@ -58,3 +58,9 @@ class RepositorioCarrito:
         sesion.commit()
         sesion.refresh(carrito)
         return carrito
+
+    def actualizar_cantidad(self, sesion: Session, item: ItemCarrito, cantidad: int) -> ItemCarrito:
+        item.cantidad = cantidad
+        sesion.commit()
+        sesion.refresh(item)
+        return item
