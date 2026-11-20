@@ -14,7 +14,7 @@ from app.services.servicio_carrito import ServicioCarrito
 
 enrutador_carrito = APIRouter(
     prefix="/api/v1/carrito",
-    tags=["MOD-04: Carrito de Compras (HU-26 a HU-29)"],
+    tags=["MOD-04: Carrito de Compras (HU-26 a HU-30)"],
 )
 
 servicio_carrito = ServicioCarrito()
@@ -120,3 +120,24 @@ def recalcular_subtotales_item(
     RN-02: ningún precio unitario con descuento baja de floorPrice.
     """
     return servicio_carrito.actualizar_cantidad(sesion, usuario, itemId, datos)
+
+
+@enrutador_carrito.delete(
+    "",
+    response_model=Respuesta[CarritoSalida],
+    responses={
+        401: ERROR_401,
+        503: {"description": "No fue posible vaciar el carrito de compras"},
+    },
+)
+def vaciarCarritoDeCompras(
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    sesion: Session = Depends(get_db),
+):
+    """
+    HU-30 (FUN-04.1.5 / PRO-04.1.5): Vaciar carrito de compras.
+
+    Elimina todos los ítems asociados al carrito activo del usuario autenticado (JWT)
+    y retorna el carrito vacío con subtotal en 0.0.
+    """
+    return servicio_carrito.vaciarCarrito(sesion, usuario)
