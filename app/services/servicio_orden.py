@@ -11,12 +11,14 @@ from app.domain.carrito import (
 from app.domain.orden import (
     ESTADO_ORDEN_CANCELADA,
     ESTADO_ORDEN_PENDIENTE,
+    ESTADO_ORDEN_PROCESANDO,
     MENSAJE_CARRITO_VACIO,
     MENSAJE_ORDEN_NO_EXISTE,
     ItemOrden,
     Orden,
     validar_cancelacion_orden,
     validar_estado_consulta,
+    validar_transicion_estado_interno,
 )
 from app.repositories.repositorio_carrito import RepositorioCarrito
 from app.repositories.repositorio_orden import RepositorioOrden
@@ -236,3 +238,27 @@ class ServicioOrden:
                 "licenciasLiberadas": total_liberadas,
             },
         )
+
+    # --- HU-35: Bloquear orden al pasar a procesando (Contrato interno) ---
+
+    def actualizar_estado_interno(self, sesion: Session, orden_id: int, nuevo_estado: str) -> dict:
+        with manejar_errores_bd("No fue posible consultar la orden"):
+            orden = self.repositorio.obtener_por_id(sesion, orden_id)
+        if orden is None:
+            raise ErrorAplicacion(404, MENSAJE_ORDEN_NO_EXISTE)
+
+        estado_anterior = orden.estado
+        estado_destino = validar_transicion_estado_interno(estado_anterior, nuevo_estado)
+
+        with manejar_errores_bd("No fue posible actualizar el estado de la orden"):
+            if estado_destino == ESTADO_ORDEN_CANCELADA:
+                for item in orden.items:
+                    self.cliente_inventario.liberar_keys(sesion, item.juego_id, item.cantidad)
+            orden = self.repositorio.actualizar_estado(sesion, orden, estado_destino)
+
+        return {
+            "ordenId": orden.id,
+            "estadoAnterior": estado_anterior,
+            "estadoActual": orden.estado,
+            "bloqueada": orden.estado == ESTADO_ORDEN_PROCESANDO,
+        }

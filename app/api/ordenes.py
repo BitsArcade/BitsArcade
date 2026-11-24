@@ -5,7 +5,9 @@ from app.core.base_datos import get_db
 from app.core.respuestas import Respuesta
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.orden import (
+    ActualizarEstadoOrdenEntrada,
     CancelacionOrdenSalida,
+    EstadoOrdenInternoSalida,
     LiquidacionOrdenSalida,
     OrdenSalida,
 )
@@ -99,3 +101,22 @@ def cancelar_orden_compra(
 ):
     """HU-34: Cancelar orden de compra y liberar stock reservado."""
     return servicio_orden.cancelar_orden(sesion, usuario, ordenId)
+
+
+@enrutador_ordenes_interno.patch(
+    "/{ordenId}/estado",
+    response_model=EstadoOrdenInternoSalida,
+    responses={
+        400: {"description": "Estado destino no válido"},
+        404: {"description": "La orden indicada no existe"},
+        409: {"description": "La orden está bloqueada en PROCESANDO o la transición no es válida"},
+        503: {"description": "No fue posible actualizar el estado de la orden"},
+    },
+)
+def actualizar_estado_orden_interno(
+    ordenId: int,
+    datos: ActualizarEstadoOrdenEntrada,
+    sesion: Session = Depends(get_db),
+):
+    """HU-35: Bloquear orden al pasar a PROCESANDO (contrato interno para MOD-05 Pagos)."""
+    return servicio_orden.actualizar_estado_interno(sesion, ordenId, datos.estado)
