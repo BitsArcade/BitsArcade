@@ -4,6 +4,7 @@ from app.core.configuracion import settings
 from app.domain.parametros import CrearMonedaEntrada, CrearMetodoPagoEntrada
 from app.repositories.repositorio_parametros import RepositorioParametros
 
+
 class ServicioParametros:
     """
     Capa Application / Service de MOD-00: Orquesta los casos de uso
@@ -37,17 +38,17 @@ class ServicioParametros:
 
     def registrar_moneda(self, sesion: Session, datos: CrearMonedaEntrada):
         """HU-01 / PRO-00.1.1: Validar unicidad del código ISO y crear moneda activa."""
-        existente = self.repositorio.obtener_moneda_por_codigo(sesion, datos.codigo_iso)
+        existente = self.repositorio.obtener_moneda_por_codigo(sesion, datos.codigoIso)
         if existente:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"La moneda con código ISO '{datos.codigo_iso}' ya se encuentra registrada."
+                detail=f"La moneda con código ISO '{datos.codigoIso}' ya se encuentra registrada."
             )
         return self.repositorio.crear_moneda(
             sesion=sesion,
-            codigo_iso=datos.codigo_iso,
+            codigo_iso=datos.codigoIso,
             nombre=datos.nombre,
-            tasa_cambio_usd=datos.tasa_cambio_usd
+            tasa_cambio_usd=datos.tasaCambioUsd
         )
 
     def consultar_monedas_habilitadas(self, sesion: Session):
@@ -91,33 +92,33 @@ class ServicioParametros:
             )
         if metodo.estado == "Inactivo":
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail=f"El método de pago '{metodo.nombre}' ya se encontraba inactivo."
             )
         return self.repositorio.inactivar_metodo_pago(sesion, metodo)
 
-    # --- CONTRATOS INTERNOS ENTRE MICROSERVICIOS (Tabla 10 del informe) ---
+    # --- CONTRATOS INTERNOS ENTRE MICROSERVICIOS (Estándar v1 camelCase) ---
 
     def obtener_contrato_com01(self, sesion: Session) -> dict:
-        """COM-01 (Para MOD-02 Catálogo): Entrega taxRate y margin vigentes en formato decimal."""
+        """COM-01 (Para MOD-02 Catálogo): Entrega {tasaIva, margen} vigentes en formato decimal."""
         self.inicializar_datos_por_defecto(sesion)
         configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
         return {
-            "taxRate": round(configuracion.tasa_iva / 100, 4),
-            "margin": round(configuracion.margen_ganancia / 100, 4)
+            "tasaIva": round(configuracion.tasa_iva / 100, 4),
+            "margen": round(configuracion.margen_ganancia / 100, 4)
         }
 
     def obtener_contrato_com02(self, sesion: Session) -> dict:
-        """COM-02 (Para MOD-04 Carrito y Órdenes): Entrega taxRate y currency vigentes."""
+        """COM-02 (Para MOD-04 Carrito y Órdenes): Entrega {tasaIva, moneda} vigentes."""
         self.inicializar_datos_por_defecto(sesion)
         configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
         return {
-            "taxRate": round(configuracion.tasa_iva / 100, 4),
-            "currency": configuracion.moneda_base
+            "tasaIva": round(configuracion.tasa_iva / 100, 4),
+            "moneda": configuracion.moneda_base
         }
 
     def obtener_contrato_com03(self, sesion: Session, moneda_iso: str) -> dict:
-        """COM-03 (Para MOD-05 Transacciones): Entrega tasa de cambio vigente de la moneda."""
+        """COM-03 (Para MOD-05 Transacciones): Entrega {moneda, tasaCambio} vigente."""
         self.inicializar_datos_por_defecto(sesion)
         moneda = self.repositorio.obtener_moneda_por_codigo(sesion, moneda_iso.upper())
         if not moneda or moneda.estado != "Activo":
@@ -126,6 +127,6 @@ class ServicioParametros:
                 detail=f"La moneda '{moneda_iso.upper()}' no existe o no está activa."
             )
         return {
-            "currency": moneda.codigo_iso,
-            "exchangeRate": moneda.tasa_cambio_usd
+            "moneda": moneda.codigo_iso,
+            "tasaCambio": moneda.tasa_cambio_usd
         }
