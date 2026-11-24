@@ -16,6 +16,7 @@ from app.domain.carrito import (
     validar_stock_suficiente,
 )
 from app.repositories.repositorio_carrito import RepositorioCarrito
+from app.repositories.repositorio_orden import RepositorioOrden
 from app.services.cliente_inventario import (
     MENSAJE_COM12_NO_DISPONIBLE,
     ClienteInventario,
@@ -28,8 +29,7 @@ MENSAJE_COM11_NO_DISPONIBLE = "No fue posible obtener los precios vigentes"
 
 class ClienteCatalogo:
     """
-    Adaptador del contrato COM-11 (proveedor MOD-02): {exists, title, status, finalPrice, floorPrice}.
-    MOD-04 consume el precio calculado por el Catálogo y NO recalcula RN-01.
+    Adaptador del contrato COM-11 (proveedor MOD-02): {existe, titulo, estado, precioFinal, precioPiso}.
     """
 
     def __init__(self, servicio_catalogo: ServicioCatalogo | None = None):
@@ -47,27 +47,23 @@ class ClienteCatalogo:
 
 
 class ClienteOrdenes:
-    """
-    Consulta de licencias en órdenes previas NO canceladas del usuario (RN-05).
+    """Consulta de licencias en órdenes previas NO canceladas del usuario (RN-05)."""
 
-    Las órdenes de compra se crean en HU-31 (aún no implementada). Mientras tanto se retorna 0;
-    cuando exista la entidad Orden basta con implementar este método sin tocar el resto del flujo.
-    """
+    def __init__(self):
+        self.repo_orden = RepositorioOrden()
 
     def contar_licencias_no_canceladas(self, sesion: Session, usuario_id: int, juego_id: int) -> int:
-        return 0
+        return self.repo_orden.contar_licencias_no_canceladas(sesion, usuario_id, juego_id)
 
 
 class ServicioCarrito:
-    """Capa Application / Service de MOD-04: casos de uso del carrito (HU-26 a HU-29)."""
+    """Capa Application / Service de MOD-04: casos de uso del carrito (HU-26 a HU-30)."""
 
     def __init__(self):
         self.repositorio = RepositorioCarrito()
         self.cliente_catalogo = ClienteCatalogo()
         self.cliente_inventario = ClienteInventario()
         self.cliente_ordenes = ClienteOrdenes()
-
-    # --- Utilidades internas ---
 
     def _obtener_o_crear_carrito(self, sesion: Session, usuario_id: int) -> Carrito:
         carrito = self.repositorio.obtener_carrito_activo(sesion, usuario_id)
@@ -82,26 +78,24 @@ class ServicioCarrito:
     def _validar_reglas_cantidad(
         self, sesion: Session, usuario_id: int, juego_id: int, estado_juego: str, cantidad_total: int
     ) -> None:
-        """RN-05 (preventa) y stock suficiente vía COM-12 (solo consulta, la reserva es HU-31)."""
         licencias_ordenes = self.cliente_ordenes.contar_licencias_no_canceladas(sesion, usuario_id, juego_id)
         validar_limite_preventa(estado_juego, cantidad_total, licencias_ordenes)
         validar_stock_suficiente(cantidad_total, self._contar_disponibles(sesion, juego_id))
 
     def _armar_carrito(self, sesion: Session, carrito: Carrito) -> dict:
-        """Lista los ítems con precios vigentes de COM-11 y el subtotal preliminar (sin descuentos)."""
         items = []
         subtotal = 0.0
         for item in carrito.items:
             contrato = self.cliente_catalogo.obtener_juego(sesion, item.juego_id)
-            if not contrato.get("exists"):
+            if not contrato.get("existe"):
                 continue
-            precio_unitario = float(contrato["finalPrice"])
+            precio_unitario = float(contrato["precioFinal"])
             subtotal += precio_unitario * item.cantidad
             items.append(
                 {
                     "itemId": item.id,
-                    "gameId": item.juego_id,
-                    "titulo": contrato.get("title"),
+                    "juegoId": item.juego_id,
+                    "titulo": contrato.get("titulo"),
                     "cantidad": item.cantidad,
                     "precioUnitario": precio_unitario,
                 }
@@ -116,27 +110,25 @@ class ServicioCarrito:
     # --- HU-26: Agregar juego al carrito ---
 
     def agregar_item(self, sesion: Session, usuario: UsuarioAutenticado, datos: AgregarItemEntrada) -> dict:
-        """HU-26: valida juego (COM-11), RN-05 y stock (COM-12); guarda o acumula el ítem."""
         validar_cantidad_agregar(datos.cantidad)
-        contrato = self.cliente_catalogo.obtener_juego(sesion, datos.gameId)
+        contrato = self.cliente_catalogo.obtener_juego(sesion, datos.juegoId)
         validar_juego_vendible(contrato)
 
         mensaje_error_bd = "No fue posible agregar el juego al carrito"
         with manejar_errores_bd(mensaje_error_bd):
             carrito = self._obtener_o_crear_carrito(sesion, usuario.id)
-            existente = self.repositorio.obtener_item_por_juego(sesion, carrito.id, datos.gameId)
+            existente = self.repositorio.obtener_item_por_juego(sesion, carrito.id, datos.juegoId)
         cantidad_total = (existente.cantidad if existente else 0) + datos.cantidad
 
-        self._validar_reglas_cantidad(sesion, usuario.id, datos.gameId, contrato["status"], cantidad_total)
+        self._validar_reglas_cantidad(sesion, usuario.id, datos.juegoId, contrato["estado"], cantidad_total)
 
         with manejar_errores_bd(mensaje_error_bd):
-            self.repositorio.guardar_item(sesion, carrito, datos.gameId, cantidad_total)
+            self.repositorio.guardar_item(sesion, carrito, datos.juegoId, cantidad_total)
         return respuesta("Juego agregado al carrito", self._armar_carrito(sesion, carrito))
 
     # --- HU-27: Consultar ítems del carrito activo ---
 
     def consultar_carrito(self, sesion: Session, usuario: UsuarioAutenticado) -> dict:
-        """HU-27: ítems con precios vigentes de COM-11 y subtotal preliminar sin descuentos (HU-29)."""
         with manejar_errores_bd("No fue posible consultar el carrito"):
             carrito = self._obtener_o_crear_carrito(sesion, usuario.id)
         datos = self._armar_carrito(sesion, carrito)
@@ -147,7 +139,6 @@ class ServicioCarrito:
     # --- HU-28: Eliminar ítem del carrito ---
 
     def eliminar_item(self, sesion: Session, usuario: UsuarioAutenticado, item_id: int) -> dict:
-        """HU-28: solo se eliminan ítems del propio carrito; retorna el carrito recalculado."""
         with manejar_errores_bd("No fue posible eliminar el ítem"):
             item = self.repositorio.obtener_item_de_usuario(sesion, item_id, usuario.id)
             if item is None:
@@ -160,7 +151,6 @@ class ServicioCarrito:
     def actualizar_cantidad(
         self, sesion: Session, usuario: UsuarioAutenticado, item_id: int, datos: ActualizarCantidadEntrada
     ) -> dict:
-        """HU-29: cambia la cantidad y retorna el desglose con RN-07, RN-05, RN-08 y RN-02."""
         validar_cantidad_actualizar(datos.cantidad)
         mensaje_error_bd = "No fue posible recalcular los subtotales"
         with manejar_errores_bd(mensaje_error_bd):
@@ -170,20 +160,31 @@ class ServicioCarrito:
 
         contrato = self.cliente_catalogo.obtener_juego(sesion, item.juego_id)
         validar_juego_vendible(contrato)
-        self._validar_reglas_cantidad(sesion, usuario.id, item.juego_id, contrato["status"], datos.cantidad)
+        self._validar_reglas_cantidad(sesion, usuario.id, item.juego_id, contrato["estado"], datos.cantidad)
 
         with manejar_errores_bd(mensaje_error_bd):
             item = self.repositorio.actualizar_cantidad(sesion, item, datos.cantidad)
         desglose = calcular_desglose(
-            float(contrato["finalPrice"]), float(contrato["floorPrice"]), item.cantidad, contrato["status"]
+            float(contrato["precioFinal"]), float(contrato["precioPiso"]), item.cantidad, contrato["estado"]
         )
         return respuesta(
             "Subtotales recalculados",
             {
                 "itemId": item.id,
-                "gameId": item.juego_id,
+                "juegoId": item.juego_id,
                 "cantidad": item.cantidad,
                 **desglose,
                 "moneda": settings.DEFAULT_CURRENCY,
             },
         )
+
+    # --- HU-30: Vaciar carrito de compras ---
+
+    def vaciar_carrito(self, sesion: Session, usuario: UsuarioAutenticado) -> dict:
+        with manejar_errores_bd("No fue posible vaciar el carrito"):
+            carrito = self._obtener_o_crear_carrito(sesion, usuario.id)
+            for item in list(carrito.items):
+                sesion.delete(item)
+            sesion.commit()
+            sesion.refresh(carrito)
+        return respuesta("Carrito vaciado exitosamente", self._armar_carrito(sesion, carrito))
