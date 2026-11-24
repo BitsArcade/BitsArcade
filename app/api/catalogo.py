@@ -24,7 +24,7 @@ enrutador_catalogo = APIRouter(
 )
 
 enrutador_catalogo_interno = APIRouter(
-    prefix="/interno/v1/catalogo",
+    prefix="/internal/v1/catalogo",
     tags=["Contratos Internos MOD-02 (COM-11)"],
 )
 
@@ -33,6 +33,8 @@ servicio_catalogo = ServicioCatalogo()
 ERROR_503 = {"description": "La base de datos no está disponible"}
 ERROR_404 = {"description": "El juego indicado no existe"}
 
+
+# Nota: las rutas estáticas (/juegos/buscar, ...) se declaran antes de /juegos/{gameId}.
 
 @enrutador_catalogo.get(
     "/juegos/buscar",
@@ -45,7 +47,12 @@ def buscar_juegos_por_nombre(
     size: int = Query(TAMANO_PAGINA_POR_DEFECTO, description="Tamaño de página (1 a 100)"),
     sesion: Session = Depends(get_db),
 ):
-    """HU-16: Buscar videojuegos por nombre."""
+    """
+    HU-16: Buscar videojuegos por nombre.
+
+    Coincidencia parcial sobre el título, sin distinguir mayúsculas, solo juegos publicados.
+    Ejemplo: `GET /api/v1/catalogo/juegos/buscar?q=aurora`.
+    """
     return servicio_catalogo.buscar_por_nombre(sesion, q, page, size)
 
 
@@ -65,7 +72,13 @@ def filtrar_por_genero_y_precio(
     size: int = Query(TAMANO_PAGINA_POR_DEFECTO, description="Tamaño de página (1 a 100)"),
     sesion: Session = Depends(get_db),
 ):
-    """HU-18: Filtrado combinado por género y precio."""
+    """
+    HU-18: Filtrado combinado por género y precio.
+
+    El rango se expresa en precio final (RN-01) y se convierte a rango de costo base con los
+    parámetros vigentes de COM-01 (una sola llamada por petición). Cada ítem incluye `precioFinal`.
+    Ejemplo: `GET /api/v1/catalogo/juegos/filtrar?genero=RPG&precioMin=100000&precioMax=300000`.
+    """
     return servicio_catalogo.filtrar_por_genero_y_precio(sesion, genero, precioMin, precioMax, page, size)
 
 
@@ -78,7 +91,12 @@ def listar_juegos_destacados(
     limite: int = Query(LIMITE_DESTACADOS_POR_DEFECTO, description="Cantidad máxima (1 a 20, por defecto 10)"),
     sesion: Session = Depends(get_db),
 ):
-    """HU-19: Listar juegos destacados y novedades."""
+    """
+    HU-19: Listar juegos destacados y novedades.
+
+    Juegos publicados con marca `destacado` o en estado ESTRENO/PREVENTA, ordenados por
+    fecha de lanzamiento descendente. No usa datos de ventas.
+    """
     return servicio_catalogo.listar_destacados(sesion, limite)
 
 
@@ -96,70 +114,107 @@ def consultar_catalogo(
     size: int = Query(TAMANO_PAGINA_POR_DEFECTO, description="Tamaño de página (1 a 100)"),
     sesion: Session = Depends(get_db),
 ):
-    """HU-20 / HU-17: Consultar catálogo completo y filtrar por plataforma."""
+    """
+    HU-20: Consultar catálogo completo.
+
+    Retorna el listado paginado de juegos publicados (PREVENTA, ESTRENO, ACTIVO).
+    Los juegos INACTIVO se excluyen. No se expone el costo de adquisición ni el precio
+    (el precio final se consulta en HU-24).
+
+    HU-17: Filtrar catálogo por plataforma. Si se envía `plataforma` (PC o CONSOLA) se
+    retornan solo los juegos asociados a ella, en orden alfabético por título.
+    Ejemplo: `GET /api/v1/catalogo/juegos?plataforma=PC`.
+    """
     if plataforma is not None:
         return servicio_catalogo.filtrar_por_plataforma(sesion, plataforma, page, size)
     return servicio_catalogo.consultar_catalogo(sesion, page, size)
 
 
 @enrutador_catalogo.get(
-    "/juegos/{juegoId}",
+    "/juegos/{gameId}",
     response_model=Respuesta[FichaTecnicaSalida],
     responses={404: ERROR_404, 503: ERROR_503},
 )
-def consultar_ficha_tecnica(juegoId: int, sesion: Session = Depends(get_db)):
-    """HU-21: Consultar detalles de ficha técnica."""
-    return servicio_catalogo.consultar_ficha_tecnica(sesion, juegoId)
+def consultar_ficha_tecnica(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-21: Consultar detalles de ficha técnica.
+
+    Retorna título, descripción, género, plataformas, desarrollador, fecha de lanzamiento y
+    estado. No incluye costo de adquisición ni margen; el precio se obtiene con HU-24.
+    """
+    return servicio_catalogo.consultar_ficha_tecnica(sesion, gameId)
 
 
 @enrutador_catalogo.get(
-    "/juegos/{juegoId}/requisitos",
+    "/juegos/{gameId}/requisitos",
     response_model=Respuesta[RequisitosSalida],
     responses={404: ERROR_404, 503: ERROR_503},
 )
-def consultar_requisitos_sistema(juegoId: int, sesion: Session = Depends(get_db)):
-    """HU-22: Ver requisitos del sistema."""
-    return servicio_catalogo.consultar_requisitos(sesion, juegoId)
+def consultar_requisitos_sistema(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-22: Ver requisitos del sistema.
+
+    Retorna los requisitos `minimos` y `recomendados` (so, procesador, memoria, grafica,
+    almacenamiento). Si el juego no tiene requisitos registrados (p. ej. juegos de consola)
+    responde 200 con `success=false` y un mensaje informativo.
+    """
+    return servicio_catalogo.consultar_requisitos(sesion, gameId)
 
 
 @enrutador_catalogo.get(
-    "/juegos/{juegoId}/multimedia",
+    "/juegos/{gameId}/multimedia",
     response_model=Respuesta[MultimediaSalida],
     responses={404: ERROR_404, 503: ERROR_503},
 )
-def consultar_galeria_y_trailers(juegoId: int, sesion: Session = Depends(get_db)):
-    """HU-23: Visualizar galería y trailers."""
-    return servicio_catalogo.consultar_multimedia(sesion, juegoId)
+def consultar_galeria_y_trailers(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-23: Visualizar galería y trailers.
+
+    Retorna las URLs almacenadas agrupadas en `imagenes` y `videos`. No se integra ninguna
+    API externa de video.
+    """
+    return servicio_catalogo.consultar_multimedia(sesion, gameId)
 
 
 @enrutador_catalogo.get(
-    "/juegos/{juegoId}/precio",
+    "/juegos/{gameId}/precio",
     response_model=Respuesta[PrecioSalida],
     responses={
-        400: {"description": "El precio calculado viola la política de margen mínimo (RN-02)"},
         404: ERROR_404,
+        422: {"description": "El precio calculado viola la política de margen mínimo (RN-02)"},
         503: {"description": "No fue posible obtener los parámetros financieros / calcular el precio"},
     },
 )
-def consultar_precio_final(juegoId: int, sesion: Session = Depends(get_db)):
-    """HU-24: Calcular y consultar precio final público."""
-    return servicio_catalogo.consultar_precio_final(sesion, juegoId)
+def consultar_precio_final(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-24: Calcular y consultar precio final público.
+
+    RN-01: `P_venta = C_A × (1 + M) × (1 + IVA)` con {taxRate, margin} vigentes de MOD-00 (COM-01).
+    RN-02: `P_venta >= C_A × (1 + IVA)`; si se viola responde 422. La respuesta no expone C_A
+    ni margen. Moneda de presentación: COP (moneda base del sistema).
+    """
+    return servicio_catalogo.consultar_precio_final(sesion, gameId)
 
 
-@enrutador_catalogo_interno.get("/juegos/{juegoId}", response_model=ContratoCom11Salida)
-def obtener_juego_com11(juegoId: int, sesion: Session = Depends(get_db)):
-    """COM-11: Entrega {existe, titulo, estado, precioFinal, precioPiso} al módulo MOD-04 (Carrito)."""
-    return servicio_catalogo.obtener_contrato_com11(sesion, juegoId)
+@enrutador_catalogo_interno.get("/juegos/{gameId}", response_model=ContratoCom11Salida)
+def obtener_juego_com11(gameId: int, sesion: Session = Depends(get_db)):
+    """COM-11: Entrega {exists, title, status, finalPrice, floorPrice} al módulo MOD-04 (Carrito)."""
+    return servicio_catalogo.obtener_contrato_com11(sesion, gameId)
 
 
 @enrutador_catalogo.get(
-    "/juegos/{juegoId}/stock",
+    "/juegos/{gameId}/stock",
     response_model=Respuesta[StockSalida],
     responses={
         404: ERROR_404,
         503: {"description": "No fue posible verificar la disponibilidad (COM-12) / el stock (BD)"},
     },
 )
-def verificar_disponibilidad_stock(juegoId: int, sesion: Session = Depends(get_db)):
-    """HU-25: Verificar disponibilidad de stock."""
-    return servicio_catalogo.verificar_stock(sesion, juegoId)
+def verificar_disponibilidad_stock(gameId: int, sesion: Session = Depends(get_db)):
+    """
+    HU-25: Verificar disponibilidad de stock.
+
+    Consulta el stock a MOD-03 (COM-12) y retorna `DISPONIBLE` o `AGOTADO` sin exponer el
+    conteo exacto de keys. Si MOD-03 no responde se retorna 503 (nunca se asume DISPONIBLE).
+    """
+    return servicio_catalogo.verificar_stock(sesion, gameId)

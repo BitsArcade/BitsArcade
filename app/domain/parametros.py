@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from app.core.base_datos import Base
 
 # =====================================================================
@@ -15,14 +15,6 @@ class Moneda(Base):
     nombre = Column(String(50), nullable=False)
     tasa_cambio_usd = Column(Float, nullable=False, default=1.0)
     estado = Column(String(20), nullable=False, default="Activo")
-
-    @property
-    def codigoIso(self) -> str:
-        return self.codigo_iso
-
-    @property
-    def tasaCambioUsd(self) -> float:
-        return self.tasa_cambio_usd
 
 
 class ConfiguracionFinanciera(Base):
@@ -45,16 +37,16 @@ class MetodoPago(Base):
 
 
 # =====================================================================
-# 2. ESQUEMAS DE VALIDACIÓN Y REGLAS DE DOMINIO (Pydantic DTOs - camelCase)
+# 2. ESQUEMAS DE VALIDACIÓN Y REGLAS DE DOMINIO (Pydantic DTOs)
 # =====================================================================
 
 class CrearMonedaEntrada(BaseModel):
     """Contrato de entrada para HU-01 (FUN-00.1.1: Registrar nueva moneda)."""
-    codigoIso: str = Field(..., min_length=3, max_length=3, examples=["EUR"])
+    codigo_iso: str = Field(..., min_length=3, max_length=3, examples=["EUR"])
     nombre: str = Field(..., min_length=3, max_length=50, examples=["Euro"])
-    tasaCambioUsd: float = Field(default=1.0, gt=0, examples=[0.92])
+    tasa_cambio_usd: float = Field(default=1.0, gt=0, examples=[0.92])
 
-    @field_validator("codigoIso")
+    @field_validator("codigo_iso")
     @classmethod
     def normalizar_codigo_iso(cls, valor: str) -> str:
         if not valor.isalpha():
@@ -65,22 +57,23 @@ class CrearMonedaEntrada(BaseModel):
 class MonedaSalida(BaseModel):
     """Contrato de salida para HU-01 y HU-02."""
     id: int
-    codigoIso: str
+    codigo_iso: str
     nombre: str
-    tasaCambioUsd: float
+    tasa_cambio_usd: float
     estado: str
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
 class ActualizarIvaEntrada(BaseModel):
     """Contrato de entrada para HU-03 (PRO-00.1.3: Validar IVA entre 0 y 100)."""
-    tasaIva: float = Field(..., ge=0, le=100, examples=[19.0])
+    tasa_iva: float = Field(..., ge=0, le=100, examples=[19.0])
 
 
 class ActualizarMargenEntrada(BaseModel):
     """Contrato de entrada para HU-04 (PRO-00.1.4: Validar markup > 0 y proteger RN-02)."""
-    margenGanancia: float = Field(..., gt=0, examples=[25.0])
+    margen_ganancia: float = Field(..., gt=0, examples=[25.0])
 
 
 class CrearMetodoPagoEntrada(BaseModel):
@@ -94,4 +87,5 @@ class MetodoPagoSalida(BaseModel):
     nombre: str
     estado: str
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True

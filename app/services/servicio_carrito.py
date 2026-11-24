@@ -16,6 +16,7 @@ from app.domain.carrito import (
     validar_stock_suficiente,
 )
 from app.repositories.repositorio_carrito import RepositorioCarrito
+from app.repositories.repositorio_orden import RepositorioOrden
 from app.services.cliente_inventario import (
     MENSAJE_COM12_NO_DISPONIBLE,
     ClienteInventario,
@@ -46,17 +47,17 @@ class ClienteCatalogo:
 
 
 class ClienteOrdenes:
-    """
-    Consulta de licencias en órdenes previas NO canceladas del usuario (RN-05).
-    Se conectará a la entidad Orden en la HU-34.
-    """
+    """Consulta de licencias en órdenes previas NO canceladas del usuario (RN-05)."""
+
+    def __init__(self):
+        self.repo_orden = RepositorioOrden()
 
     def contar_licencias_no_canceladas(self, sesion: Session, usuario_id: int, juego_id: int) -> int:
-        return 0
+        return self.repo_orden.contar_licencias_no_canceladas(sesion, usuario_id, juego_id)
 
 
 class ServicioCarrito:
-    """Capa Application / Service de MOD-04: casos de uso del carrito (HU-26 a HU-29)."""
+    """Capa Application / Service de MOD-04: casos de uso del carrito (HU-26 a HU-30)."""
 
     def __init__(self):
         self.repositorio = RepositorioCarrito()
@@ -176,3 +177,14 @@ class ServicioCarrito:
                 "moneda": settings.DEFAULT_CURRENCY,
             },
         )
+
+    # --- HU-30: Vaciar carrito de compras ---
+
+    def vaciar_carrito(self, sesion: Session, usuario: UsuarioAutenticado) -> dict:
+        with manejar_errores_bd("No fue posible vaciar el carrito"):
+            carrito = self._obtener_o_crear_carrito(sesion, usuario.id)
+            for item in list(carrito.items):
+                sesion.delete(item)
+            sesion.commit()
+            sesion.refresh(carrito)
+        return respuesta("Carrito vaciado exitosamente", self._armar_carrito(sesion, carrito))

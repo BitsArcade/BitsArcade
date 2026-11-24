@@ -14,7 +14,7 @@ from app.services.servicio_carrito import ServicioCarrito
 
 enrutador_carrito = APIRouter(
     prefix="/api/v1/carrito",
-    tags=["MOD-04: Carrito de Compras (HU-26 a HU-29)"],
+    tags=["MOD-04: Carrito de Compras (HU-26 a HU-30)"],
 )
 
 servicio_carrito = ServicioCarrito()
@@ -57,6 +57,22 @@ def consultar_carrito_activo(
 ):
     """HU-27: Consultar ítems del carrito activo."""
     return servicio_carrito.consultar_carrito(sesion, usuario)
+
+
+@enrutador_carrito.delete(
+    "",
+    response_model=Respuesta[CarritoSalida],
+    responses={
+        401: ERROR_401,
+        503: {"description": "No fue posible vaciar el carrito"},
+    },
+)
+def vaciar_carrito_activo(
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    sesion: Session = Depends(get_db),
+):
+    """HU-30: Vaciar carrito de compras."""
+    return servicio_carrito.vaciar_carrito(sesion, usuario)
 
 
 @enrutador_carrito.delete(
