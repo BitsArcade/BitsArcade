@@ -1,7 +1,6 @@
 from sqlalchemy.orm import Session
 
 from app.core.configuracion import settings
-
 from app.core.respuestas import ErrorAplicacion, manejar_errores_bd, respuesta
 from app.domain.catalogo import (
     MENSAJE_JUEGO_NO_EXISTE,
@@ -32,9 +31,7 @@ MENSAJE_COM01_NO_DISPONIBLE = "No fue posible obtener los parámetros financiero
 
 class ClienteParametrosFinancieros:
     """
-    Adaptador del contrato COM-01 (proveedor MOD-00): {taxRate, margin} en formato decimal.
-    Hoy se resuelve en proceso con el servicio de MOD-00; si se separa en microservicios basta
-    con reemplazar este adaptador por un cliente HTTP a GET /internal/v1/parametros/financieros.
+    Adaptador del contrato COM-01 (proveedor MOD-00): {tasaIva, margen} en formato decimal.
     """
 
     def __init__(self, servicio_parametros: ServicioParametros | None = None):
@@ -43,8 +40,8 @@ class ClienteParametrosFinancieros:
     def obtener(self, sesion: Session) -> dict:
         try:
             contrato = self.servicio_parametros.obtener_contrato_com01(sesion)
-            return {"taxRate": float(contrato["taxRate"]), "margin": float(contrato["margin"])}
-        except Exception as error:  # Cualquier fallo de COM-01 se trata como no disponible.
+            return {"tasaIva": float(contrato["tasaIva"]), "margen": float(contrato["margen"])}
+        except Exception as error:
             raise ErrorAplicacion(503, MENSAJE_COM01_NO_DISPONIBLE) from error
 
 
@@ -112,7 +109,7 @@ class ServicioCatalogo:
         return respuesta("Consulta de ficha técnica exitosa", juego_a_ficha_tecnica(juego))
 
     def consultar_requisitos(self, sesion: Session, juego_id: int) -> dict:
-        """HU-22: requisitos mínimos y recomendados; 200 informativo si no hay registros (p. ej. consola)."""
+        """HU-22: requisitos mínimos y recomendados; 200 informativo si no hay registros."""
         mensaje_error = "No fue posible consultar los requisitos"
         self._obtener_juego_publicado(sesion, juego_id, mensaje_error)
         with manejar_errores_bd(mensaje_error):
@@ -139,33 +136,33 @@ class ServicioCatalogo:
         """HU-24: aplica RN-01/RN-02 con los parámetros vigentes de COM-01 (una sola llamada)."""
         juego = self._obtener_juego_publicado(sesion, juego_id, "No fue posible calcular el precio")
         parametros = self.cliente_parametros.obtener(sesion)
-        precio_final = calcular_precio_final(juego.costo_adquisicion, parametros["margin"], parametros["taxRate"])
+        precio_final = calcular_precio_final(juego.costo_adquisicion, parametros["margen"], parametros["tasaIva"])
         return respuesta(
             "Consulta de precio exitosa",
             {
-                "gameId": juego.id,
+                "juegoId": juego.id,
                 "moneda": settings.DEFAULT_CURRENCY,
-                "ivaPorcentaje": round(parametros["taxRate"] * 100, 2),
+                "ivaPorcentaje": round(parametros["tasaIva"] * 100, 2),
                 "precioFinal": precio_final,
             },
         )
 
     def obtener_contrato_com11(self, sesion: Session, juego_id: int) -> dict:
         """
-        COM-11 (proveedor MOD-02): {exists, title, status, finalPrice, floorPrice}
-        con floorPrice = C_A × (1 + IVA). Consumido por MOD-04 (Carrito).
+        COM-11 (proveedor MOD-02): {existe, titulo, estado, precioFinal, precioPiso}
+        con precioPiso = C_A × (1 + IVA). Consumido por MOD-04 (Carrito).
         """
         with manejar_errores_bd("No fue posible calcular el precio"):
             juego = self.repositorio.obtener_por_id(sesion, juego_id)
         if juego is None:
-            return {"exists": False, "title": None, "status": None, "finalPrice": None, "floorPrice": None}
+            return {"existe": False, "titulo": None, "estado": None, "precioFinal": None, "precioPiso": None}
         parametros = self.cliente_parametros.obtener(sesion)
         return {
-            "exists": True,
-            "title": juego.titulo,
-            "status": juego.estado,
-            "finalPrice": calcular_precio_final(juego.costo_adquisicion, parametros["margin"], parametros["taxRate"]),
-            "floorPrice": calcular_precio_piso(juego.costo_adquisicion, parametros["taxRate"]),
+            "existe": True,
+            "titulo": juego.titulo,
+            "estado": juego.estado,
+            "precioFinal": calcular_precio_final(juego.costo_adquisicion, parametros["margen"], parametros["tasaIva"]),
+            "precioPiso": calcular_precio_piso(juego.costo_adquisicion, parametros["tasaIva"]),
         }
 
     # --- HU-18: Filtrado combinado por género y precio final ---
@@ -183,7 +180,7 @@ class ServicioCatalogo:
         validar_rango_precios(precio_min, precio_max)
         validar_paginacion(page, size)
         parametros = self.cliente_parametros.obtener(sesion)
-        margen, tasa_iva = parametros["margin"], parametros["taxRate"]
+        margen, tasa_iva = parametros["margen"], parametros["tasaIva"]
         costo_min, costo_max = convertir_rango_precio_a_costo(precio_min, precio_max, margen, tasa_iva)
         genero_limpio = (genero or "").strip() or None
         with manejar_errores_bd("No fue posible filtrar el catálogo"):
@@ -213,5 +210,5 @@ class ServicioCatalogo:
             raise ErrorAplicacion(503, MENSAJE_COM12_NO_DISPONIBLE) from error
         return respuesta(
             "Consulta de stock exitosa",
-            {"gameId": juego.id, "estado": determinar_estado_stock(disponibles)},
+            {"juegoId": juego.id, "estado": determinar_estado_stock(disponibles)},
         )

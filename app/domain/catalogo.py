@@ -17,15 +17,11 @@ ESTADO_ESTRENO = "ESTRENO"
 ESTADO_ACTIVO = "ACTIVO"
 ESTADO_INACTIVO = "INACTIVO"
 
-# Estados que se consideran "publicados" en la tienda (HU-20).
 ESTADOS_PUBLICADOS = (ESTADO_PREVENTA, ESTADO_ESTRENO, ESTADO_ACTIVO)
-
 PLATAFORMAS_VALIDAS = ("PC", "CONSOLA")
 
 TAMANO_PAGINA_POR_DEFECTO = 20
 TAMANO_PAGINA_MAXIMO = 100
-
-
 LONGITUD_MINIMA_BUSQUEDA = 2
 
 
@@ -79,12 +75,12 @@ def calcular_precio_piso(costo_adquisicion: float, tasa_iva: float) -> float:
 def calcular_precio_final(costo_adquisicion: float, margen: float, tasa_iva: float) -> float:
     """
     RN-01: P_venta = C_A × (1 + M) × (1 + IVA)  (margen e IVA en formato decimal).
-    RN-02: P_venta >= C_A × (1 + IVA); si se viola se lanza 422.
+    RN-02: P_venta >= C_A × (1 + IVA); si se viola se lanza 400.
     """
     precio_venta = costo_adquisicion * (1 + margen) * (1 + tasa_iva)
     precio_piso = costo_adquisicion * (1 + tasa_iva)
     if precio_venta + 1e-9 < precio_piso:
-        raise ErrorAplicacion(422, MENSAJE_VIOLACION_RN02)
+        raise ErrorAplicacion(400, MENSAJE_VIOLACION_RN02)
     return round(precio_venta, 2)
 
 
@@ -102,7 +98,6 @@ def convertir_rango_precio_a_costo(
     """
     HU-18: convierte el rango de precio final (RN-01) a rango de costo base:
     C_A entre min / ((1+M)(1+IVA)) y max / ((1+M)(1+IVA)).
-    Se aplica una tolerancia mínima para no excluir por redondeo de punto flotante.
     """
     factor = (1 + margen) * (1 + tasa_iva)
     tolerancia = 1e-6
@@ -135,9 +130,7 @@ class Juego(Base):
     desarrollador = Column(String(100), nullable=True)
     fecha_lanzamiento = Column(Date, nullable=True)
     estado = Column(String(20), nullable=False, default=ESTADO_ACTIVO)
-    # HU-19: marca editorial del propio catálogo (no depende de datos de ventas).
     destacado = Column(Boolean, nullable=False, default=False)
-    # Costo de adquisición (C_A) en COP. Dato sensible: NUNCA se expone en respuestas públicas.
     costo_adquisicion = Column(Float, nullable=False, default=0.0)
 
     plataformas = relationship(
@@ -232,7 +225,7 @@ def agrupar_multimedia(recursos: list[MultimediaJuego]) -> dict:
 def juego_a_item(juego: Juego) -> dict:
     """Representación pública resumida de un juego (sin C_A ni precio)."""
     return {
-        "gameId": juego.id,
+        "juegoId": juego.id,
         "titulo": juego.titulo,
         "genero": juego.genero,
         "plataformas": juego.nombres_plataformas,
@@ -243,7 +236,7 @@ def juego_a_item(juego: Juego) -> dict:
 def juego_a_ficha_tecnica(juego: Juego) -> dict:
     """HU-21: ficha técnica pública. NO incluye costo de adquisición, margen ni precio."""
     return {
-        "gameId": juego.id,
+        "juegoId": juego.id,
         "titulo": juego.titulo,
         "descripcion": juego.descripcion,
         "genero": juego.genero,
@@ -258,11 +251,11 @@ MENSAJE_JUEGO_NO_EXISTE = "El juego indicado no existe"
 
 
 # =====================================================================
-# 3. ESQUEMAS DE SALIDA (Pydantic DTOs para Swagger)
+# 3. ESQUEMAS DE SALIDA (Pydantic DTOs - camelCase en español)
 # =====================================================================
 
 class JuegoResumenSalida(BaseModel):
-    gameId: int
+    juegoId: int
     titulo: str
     genero: str
     plataformas: list[str]
@@ -289,7 +282,7 @@ class PaginaJuegosSalida(BaseModel):
 
 
 class FichaTecnicaSalida(BaseModel):
-    gameId: int
+    juegoId: int
     titulo: str
     descripcion: Optional[str] = None
     genero: str
@@ -318,7 +311,7 @@ class MultimediaSalida(BaseModel):
 
 
 class PrecioSalida(BaseModel):
-    gameId: int
+    juegoId: int
     moneda: str
     ivaPorcentaje: float
     precioFinal: float
@@ -326,13 +319,13 @@ class PrecioSalida(BaseModel):
 
 class ContratoCom11Salida(BaseModel):
     """COM-11 (proveedor MOD-02 → consumidor MOD-04)."""
-    exists: bool
-    title: Optional[str] = None
-    status: Optional[str] = None
-    finalPrice: Optional[float] = None
-    floorPrice: Optional[float] = None
+    existe: bool
+    titulo: Optional[str] = None
+    estado: Optional[str] = None
+    precioFinal: Optional[float] = None
+    precioPiso: Optional[float] = None
 
 
 class StockSalida(BaseModel):
-    gameId: int
+    juegoId: int
     estado: str

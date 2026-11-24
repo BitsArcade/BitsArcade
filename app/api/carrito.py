@@ -39,13 +39,7 @@ def agregar_juego_al_carrito(
     usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
     sesion: Session = Depends(get_db),
 ):
-    """
-    HU-26: Agregar juego al carrito de compras.
-
-    Obtiene existencia, estado y precio del juego vía COM-11, verifica stock vía COM-12
-    (solo consulta; la reserva ocurre en HU-31) y aplica RN-05 en PREVENTA (máximo 1 licencia).
-    Si el juego ya estaba en el carrito acumula la cantidad. El userId sale del JWT.
-    """
+    """HU-26: Agregar juego al carrito de compras."""
     return servicio_carrito.agregar_item(sesion, usuario, datos)
 
 
@@ -61,13 +55,7 @@ def consultar_carrito_activo(
     usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
     sesion: Session = Depends(get_db),
 ):
-    """
-    HU-27: Consultar ítems del carrito activo.
-
-    Retorna los ítems del carrito del usuario del JWT con precios vigentes obtenidos del
-    Catálogo (COM-11; MOD-04 no recalcula RN-01) y el subtotal preliminar SIN descuentos
-    (los descuentos los aplica HU-29). Si el carrito está vacío responde 200 con `success=false`.
-    """
+    """HU-27: Consultar ítems del carrito activo."""
     return servicio_carrito.consultar_carrito(sesion, usuario)
 
 
@@ -85,12 +73,7 @@ def eliminar_item_del_carrito(
     usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
     sesion: Session = Depends(get_db),
 ):
-    """
-    HU-28: Eliminar ítem del carrito.
-
-    Remueve el ítem del carrito del usuario autenticado (solo del propio carrito; un ítem de
-    otro usuario responde 404), recalcula los totales y retorna el carrito.
-    """
+    """HU-28: Eliminar ítem del carrito."""
     return servicio_carrito.eliminar_item(sesion, usuario, itemId)
 
 
@@ -111,12 +94,5 @@ def recalcular_subtotales_item(
     usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
     sesion: Session = Depends(get_db),
 ):
-    """
-    HU-29: Recalcular subtotales con promociones y volumen.
-
-    Cambia la cantidad del ítem y retorna el desglose. Estado y precios vía COM-11.
-    RN-07: PREVENTA/ESTRENO sin descuentos. RN-05: máximo 1 licencia en preventa.
-    RN-08: juego ACTIVO con cantidad >= 3 recibe 10 % de descuento por unidad.
-    RN-02: ningún precio unitario con descuento baja de floorPrice.
-    """
+    """HU-29: Recalcular subtotales con promociones y volumen."""
     return servicio_carrito.actualizar_cantidad(sesion, usuario, itemId, datos)
