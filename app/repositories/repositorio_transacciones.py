@@ -40,12 +40,17 @@ class RepositorioTransacciones:
 
     @staticmethod
     def _comprobante_a_dominio(modelo: ComprobanteORM) -> Comprobante:
+        fecha_utc = (
+            modelo.fecha.replace(tzinfo=timezone.utc)
+            if modelo.fecha.tzinfo is None
+            else modelo.fecha
+        )
         return Comprobante(
             comprobante_id=modelo.comprobante_id,
             transaccion_id=modelo.transaccion_id,
             orden_id=modelo.orden_id,
             usuario_id=modelo.usuario_id,
-            fecha=modelo.fecha,
+            fecha=fecha_utc,
             monto=modelo.monto,
             moneda=modelo.moneda,
             tasa_cambio=modelo.tasa_cambio,
@@ -146,6 +151,7 @@ class RepositorioTransacciones:
         comprobante: Comprobante,
         mensaje_error_bd: str = "No fue posible procesar la aprobación del pago",
     ) -> Comprobante:
+        """Persiste un único comprobante inmutable por transacción (HU-39)."""
         try:
             existente = (
                 self.db.query(ComprobanteORM)
@@ -172,4 +178,34 @@ class RepositorioTransacciones:
             return self._comprobante_a_dominio(nuevo)
         except SQLAlchemyError as error:
             self.db.rollback()
+            raise ErrorAplicacion(503, mensaje_error_bd) from error
+
+    def obtener_comprobante_por_transaccion_id(
+        self,
+        transaccion_id: str,
+        mensaje_error_bd: str = "No fue posible consultar el comprobante",
+    ) -> Optional[Comprobante]:
+        try:
+            registro = (
+                self.db.query(ComprobanteORM)
+                .filter(ComprobanteORM.transaccion_id == transaccion_id)
+                .first()
+            )
+            return self._comprobante_a_dominio(registro) if registro else None
+        except SQLAlchemyError as error:
+            raise ErrorAplicacion(503, mensaje_error_bd) from error
+
+    def obtener_comprobante_por_id(
+        self,
+        comprobante_id: str,
+        mensaje_error_bd: str = "No fue posible consultar el comprobante",
+    ) -> Optional[Comprobante]:
+        try:
+            registro = (
+                self.db.query(ComprobanteORM)
+                .filter(ComprobanteORM.comprobante_id == comprobante_id)
+                .first()
+            )
+            return self._comprobante_a_dominio(registro) if registro else None
+        except SQLAlchemyError as error:
             raise ErrorAplicacion(503, mensaje_error_bd) from error

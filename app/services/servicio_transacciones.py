@@ -1,5 +1,5 @@
 """
-Servicio de aplicación para MOD-05 Transacciones (HU-36, HU-37 y HU-38).
+Servicio de aplicación para MOD-05 Transacciones (HU-36, HU-37, HU-38 y HU-39).
 """
 import uuid
 from datetime import datetime, timezone
@@ -180,6 +180,24 @@ class ServicioTransacciones:
             settings, "PASARELA_WEBHOOK_SECRET", settings.SECRET_KEY
         )
 
+    @staticmethod
+    def _serializar_comprobante(comprobante: Comprobante) -> dict[str, Any]:
+        fecha_utc = (
+            comprobante.fecha.replace(tzinfo=timezone.utc)
+            if comprobante.fecha.tzinfo is None
+            else comprobante.fecha
+        )
+        return {
+            "comprobanteId": comprobante.comprobante_id,
+            "transaccionId": comprobante.transaccion_id,
+            "ordenId": comprobante.orden_id,
+            "fecha": fecha_utc.isoformat(),
+            "monto": comprobante.monto,
+            "moneda": comprobante.moneda,
+            "tasaCambio": comprobante.tasa_cambio,
+            "referenciaPasarela": comprobante.referencia_pasarela,
+        }
+
     async def iniciar_cobro(
         self,
         orden_id: int,
@@ -313,7 +331,7 @@ class ServicioTransacciones:
             mensaje_error_bd="No fue posible procesar la aprobación del pago",
         )
 
-        # 6. Generar comprobante digital (HU-39, único por transacción)
+        # 6. Generar comprobante digital inmutable (HU-39, único por transacción)
         comprobante = Comprobante(
             comprobante_id=f"CMP-{uuid.uuid4().hex[:8].upper()}",
             transaccion_id=transaccion_aprobada.transaccion_id,
@@ -457,3 +475,42 @@ class ServicioTransacciones:
             "estado": transaccion.estado.value,
             "mensajeUsuario": ReglasTransaccion.obtener_mensaje_usuario(transaccion),
         }
+
+    def consultar_comprobante_por_transaccion(
+        self,
+        transaccion_id: str,
+        usuario_id: int,
+    ) -> dict[str, Any]:
+        """HU-39: Consulta el comprobante digital inmutable asociado a una transacción aprobada."""
+        transaccion = self.repositorio.obtener_por_transaccion_id(
+            transaccion_id,
+            mensaje_error_bd="No fue posible consultar el comprobante",
+        )
+        if transaccion is None or transaccion.usuario_id != usuario_id:
+            raise ErrorAplicacion(404, "La transacción indicada no existe")
+
+        ReglasTransaccion.validar_comprobante_disponible(transaccion)
+
+        comprobante = self.repositorio.obtener_comprobante_por_transaccion_id(
+            transaccion_id,
+            mensaje_error_bd="No fue posible consultar el comprobante",
+        )
+        if comprobante is None:
+            raise ErrorAplicacion(404, "El comprobante indicado no existe")
+
+        return self._serializar_comprobante(comprobante)
+
+    def consultar_comprobante_por_id(
+        self,
+        comprobante_id: str,
+        usuario_id: int,
+    ) -> dict[str, Any]:
+        """HU-39: Consulta un comprobante digital directamente por su comprobanteId."""
+        comprobante = self.repositorio.obtener_comprobante_por_id(
+            comprobante_id,
+            mensaje_error_bd="No fue posible consultar el comprobante",
+        )
+        if comprobante is None or comprobante.usuario_id != usuario_id:
+            raise ErrorAplicacion(404, "El comprobante indicado no existe")
+
+        return self._serializar_comprobante(comprobante)

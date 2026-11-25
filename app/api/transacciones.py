@@ -1,5 +1,5 @@
 """
-Endpoints de MOD-05 Transacciones (HU-36, HU-37 y HU-38).
+Endpoints de MOD-05 Transacciones (HU-36, HU-37, HU-38 y HU-39).
 """
 import json
 from typing import Optional, Union
@@ -13,9 +13,11 @@ from app.core.base_datos import get_db
 from app.core.respuestas import ErrorAplicacion
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.transacciones import (
+    DatosComprobante,
     DatosEstadoPago,
     DatosPagoEnProceso,
     ReglasTransaccion,
+    RespuestaComprobante,
     RespuestaEstadoPago,
     RespuestaIniciarPago,
     RespuestaPagoAprobado,
@@ -133,6 +135,36 @@ async def notificacion_pasarela(
 
 
 @enrutador_transacciones.get(
+    "/comprobantes/{comprobanteId}",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaComprobante,
+    summary="Consultar comprobante digital por comprobanteId (HU-39)",
+    description=(
+        "Retorna el comprobante digital inmutable generado al aprobarse un pago, "
+        "verificando que pertenezca al usuario autenticado."
+    ),
+)
+def consultar_comprobante_por_id(
+    comprobanteId: str,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioTransacciones = Depends(obtener_servicio_transacciones),
+):
+    resultado = servicio.consultar_comprobante_por_id(
+        comprobante_id=comprobanteId,
+        usuario_id=usuario.id,
+    )
+    datos = DatosComprobante(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Consulta de comprobante exitosa",
+            "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_transacciones.get(
     "/{transaccionId}/estado",
     status_code=status.HTTP_200_OK,
     response_model=RespuestaEstadoPago,
@@ -156,6 +188,36 @@ def consultar_estado_pago(
         status_code=status.HTTP_200_OK,
         content={
             "message": "Consulta de estado de pago exitosa",
+            "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_transacciones.get(
+    "/{transaccionId}/comprobante",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaComprobante,
+    summary="Consultar comprobante digital de una transacción aprobada (HU-39)",
+    description=(
+        "Retorna el comprobante digital único e inmutable asociado a una transacción "
+        "aprobada del usuario autenticado."
+    ),
+)
+def consultar_comprobante_por_transaccion(
+    transaccionId: str,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioTransacciones = Depends(obtener_servicio_transacciones),
+):
+    resultado = servicio.consultar_comprobante_por_transaccion(
+        transaccion_id=transaccionId,
+        usuario_id=usuario.id,
+    )
+    datos = DatosComprobante(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Consulta de comprobante exitosa",
             "data": datos.model_dump(),
             "success": True,
         },

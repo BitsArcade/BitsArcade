@@ -49,6 +49,8 @@ class TransaccionORM(Base):
 
 
 class ComprobanteORM(Base):
+    """Comprobante digital inmutable, único por transacción aprobada (HU-39)."""
+
     __tablename__ = "comprobantes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -94,8 +96,10 @@ class Transaccion:
     actualizado_en: Optional[datetime] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Comprobante:
+    """Entidad de dominio inmutable para el comprobante digital (HU-39)."""
+
     comprobante_id: str
     transaccion_id: str
     orden_id: int
@@ -222,6 +226,17 @@ class ReglasTransaccion:
         ):
             raise ErrorAplicacion(409, "El monto o la moneda no coinciden con la orden")
 
+    @staticmethod
+    def validar_comprobante_disponible(transaccion: Transaccion) -> None:
+        """Solo las transacciones aprobadas cuentan con comprobante digital (HU-39)."""
+        if transaccion.estado not in (
+            EstadoTransaccion.APROBADA,
+            EstadoTransaccion.REQUIERE_REVISION,
+        ):
+            raise ErrorAplicacion(
+                409, "La transacción no está aprobada y no cuenta con comprobante"
+            )
+
     @classmethod
     def mapear_rechazo_pasarela(
         cls, estado_pasarela: str
@@ -332,4 +347,21 @@ class DatosEstadoPago(BaseModel):
 class RespuestaEstadoPago(BaseModel):
     message: str
     data: Optional[DatosEstadoPago] = None
+    success: bool
+
+
+class DatosComprobante(BaseModel):
+    comprobanteId: str
+    transaccionId: str
+    ordenId: int
+    fecha: str
+    monto: float
+    moneda: str
+    tasaCambio: float
+    referenciaPasarela: Optional[str] = None
+
+
+class RespuestaComprobante(BaseModel):
+    message: str
+    data: Optional[DatosComprobante] = None
     success: bool
