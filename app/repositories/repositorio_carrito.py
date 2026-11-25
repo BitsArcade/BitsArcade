@@ -64,3 +64,10 @@ class RepositorioCarrito:
         sesion.commit()
         sesion.refresh(item)
         return item
+
+    def vaciarCarrito(self, sesion: Session, carrito: Carrito) -> Carrito:
+        """HU-30: Elimina todos los ítems asociados al carrito activo del usuario."""
+        sesion.query(ItemCarrito).filter(ItemCarrito.carrito_id == carrito.id).delete()
+        sesion.commit()
+        sesion.refresh(carrito)
+        return carrito

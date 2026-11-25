@@ -59,7 +59,7 @@ class ClienteOrdenes:
 
 
 class ServicioCarrito:
-    """Capa Application / Service de MOD-04: casos de uso del carrito (HU-26 a HU-29)."""
+    """Capa Application / Service de MOD-04: casos de uso del carrito (HU-26 a HU-30)."""
 
     def __init__(self):
         self.repositorio = RepositorioCarrito()
@@ -187,3 +187,12 @@ class ServicioCarrito:
                 "moneda": settings.DEFAULT_CURRENCY,
             },
         )
+
+    # --- HU-30: Vaciar carrito de compras ---
+
+    def vaciarCarrito(self, sesion: Session, usuario: UsuarioAutenticado) -> dict:
+        """HU-30 (FUN-04.1.5 / PRO-04.1.5): Elimina todos los ítems del carrito activo del usuario."""
+        with manejar_errores_bd("No fue posible vaciar el carrito de compras"):
+            carrito = self._obtener_o_crear_carrito(sesion, usuario.id)
+            carrito = self.repositorio.vaciarCarrito(sesion, carrito)
+        return respuesta("Carrito vaciado exitosamente", self._armar_carrito(sesion, carrito))

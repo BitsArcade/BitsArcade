@@ -6,8 +6,10 @@ from app.api.parametros import enrutador_parametros, enrutador_interno
 from app.domain import catalogo as modelos_catalogo
 from app.domain import inventario as modelos_inventario
 from app.domain import carrito as modelos_carrito
+from app.domain import ordenes as modelos_ordenes
 from app.api.catalogo import enrutador_catalogo, enrutador_catalogo_interno
 from app.api.carrito import enrutador_carrito
+from app.api.ordenes import enrutador_ordenes, enrutador_ordenes_interno
 from app.core.respuestas import registrar_manejadores_errores
 
 Base.metadata.create_all(bind=engine)
@@ -23,6 +25,8 @@ app.include_router(enrutador_interno)
 app.include_router(enrutador_catalogo)
 app.include_router(enrutador_catalogo_interno)
 app.include_router(enrutador_carrito)
+app.include_router(enrutador_ordenes)
+app.include_router(enrutador_ordenes_interno)
 
 registrar_manejadores_errores(app)
 
