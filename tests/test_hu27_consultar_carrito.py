@@ -1,4 +1,4 @@
-"""Pruebas de HU-27: Consultar ítems del carrito activo (GET /api/v1/carrito)."""
+﻿"""Pruebas de HU-27: Consultar ítems del carrito activo (GET /api/v1/carrito)."""
 from sqlalchemy.exc import OperationalError
 
 from app.repositories.repositorio_carrito import RepositorioCarrito
@@ -9,7 +9,7 @@ URL = "/api/v1/carrito"
 
 
 def _agregar(cliente, juego_id, cantidad=1, usuario_id=1):
-    respuesta = cliente.post("/api/v1/carrito/items", json={"gameId": juego_id, "cantidad": cantidad},
+    respuesta = cliente.post("/api/v1/carrito/items", json={"juegoId": juego_id, "cantidad": cantidad},
                              headers=encabezado_auth(usuario_id))
     assert respuesta.status_code == 201
     return respuesta.json()["data"]
@@ -25,7 +25,7 @@ def test_flujo_exitoso(cliente, crear_juego, crear_keys):
         "message": "Consulta de carrito exitosa",
         "data": {
             "carritoId": agregado["carritoId"],
-            "items": [{"itemId": agregado["items"][0]["itemId"], "gameId": juego.id, "titulo": "Aurora Quest",
+            "items": [{"itemId": agregado["items"][0]["itemId"], "juegoId": juego.id, "titulo": "Aurora Quest",
                        "cantidad": 1, "precioUnitario": 238000}],
             "subtotal": 238000,
             "moneda": "COP",
