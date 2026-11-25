@@ -15,6 +15,7 @@ from app.api.ordenes import enrutador_ordenes, enrutador_ordenes_interno
 from app.api.transacciones import enrutador_transacciones
 from app.api.despacho import enrutador_despacho_interno
 from app.core.respuestas import registrar_manejadores_errores
+from app.api.despacho import enrutador_biblioteca, enrutador_despacho_interno
 
 Base.metadata.create_all(bind=engine)
 
@@ -33,6 +34,7 @@ app.include_router(enrutador_ordenes)
 app.include_router(enrutador_ordenes_interno)
 app.include_router(enrutador_transacciones)
 app.include_router(enrutador_despacho_interno)
+app.include_router(enrutador_biblioteca)
 
 registrar_manejadores_errores(app)
 

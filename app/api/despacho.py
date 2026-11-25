@@ -1,14 +1,17 @@
 """
-Endpoints de MOD-06 Despacho (HU-41).
+Endpoints internos y públicos de MOD-06 Despacho y Biblioteca (HU-41 a HU-43).
 """
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.base_datos import get_db
+from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.despacho import (
+    ClaveReveladaSalida,
     DatosDespachoCOM10,
     RespuestaDespachoCOM10,
+    RespuestaRevelarClave,
     SolicitudDespachoCOM10,
 )
 from app.repositories.repositorio_despacho import RepositorioDespacho
@@ -20,6 +23,11 @@ from app.services.servicio_despacho import (
 enrutador_despacho_interno = APIRouter(
     prefix="/interno/v1/despacho",
     tags=["MOD-06 Despacho (Interno COM-10)"],
+)
+
+enrutador_biblioteca = APIRouter(
+    prefix="/api/v1/biblioteca",
+    tags=["MOD-06 Despacho y Biblioteca (HU-43 a HU-46)"],
 )
 
 
@@ -55,6 +63,42 @@ def despachar_orden_com10(
         status_code=status.HTTP_200_OK,
         content={
             "message": "Licencias digitales asignadas al usuario",
+            "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.post(
+    "/licencias/{licenciaId}/revelar",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaRevelarClave,
+    summary="Revelar clave digital de forma segura con formato legible (HU-43)",
+    description=(
+        "Permite al usuario autenticado propietario revelar su clave digital en grupos "
+        "de 4 caracteres separados por guiones junto con la instrucción de activación, "
+        "registrando auditoría de visualización."
+    ),
+    responses={
+        401: {"description": "Token inválido, expirado o ausente"},
+        404: {"description": "La licencia indicada no existe"},
+        503: {"description": "No fue posible revelar la clave digital"},
+    },
+)
+def revelar_clave_licencia(
+    licenciaId: str,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    resultado = servicio.revelar_clave_licencia(
+        licencia_id=licenciaId,
+        usuario_id=usuario.id,
+    )
+    datos = ClaveReveladaSalida(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Clave digital revelada",
             "data": datos.model_dump(),
             "success": True,
         },

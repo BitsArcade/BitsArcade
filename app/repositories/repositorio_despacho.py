@@ -1,7 +1,8 @@
 """
 Repositorio de persistencia para MOD-06 Despacho (HU-41 a HU-46).
 """
-from datetime import timezone
+import hashlib
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -119,8 +120,6 @@ class RepositorioDespacho:
                 semilla_huella = (
                     f"{lic.orden_id}:{lic.juego_id}:{lic.licencia_id}:{lic.clave_digital}"
                 )
-                import hashlib
-
                 huella = hashlib.sha256(semilla_huella.encode("utf-8")).hexdigest()
                 nueva_licencia = LicenciaUsuarioORM(
                     licencia_id=lic.licencia_id,
@@ -144,6 +143,50 @@ class RepositorioDespacho:
             self.db.commit()
             self.db.refresh(nuevo_despacho)
             return self._despacho_a_dominio(nuevo_despacho)
+        except SQLAlchemyError as error:
+            self.db.rollback()
+            raise ErrorAplicacion(503, mensaje_error_bd) from error
+
+    def obtener_licencia_por_id(
+        self,
+        licencia_id: str,
+        mensaje_error_bd: str = "No fue posible revelar la clave digital",
+    ) -> Optional[LicenciaUsuario]:
+        """HU-43: Consulta una licencia asignada por su identificador público (licenciaId)."""
+        try:
+            registro = (
+                self.db.query(LicenciaUsuarioORM)
+                .filter(LicenciaUsuarioORM.licencia_id == licencia_id)
+                .first()
+            )
+            return self._licencia_a_dominio(registro) if registro else None
+        except SQLAlchemyError as error:
+            raise ErrorAplicacion(503, mensaje_error_bd) from error
+
+    def registrar_revelacion_licencia(
+        self,
+        licencia_id: str,
+        fecha_revelacion: datetime,
+        mensaje_error_bd: str = "No fue posible revelar la clave digital",
+    ) -> Optional[LicenciaUsuario]:
+        """
+        HU-43: Registra auditoría de visualización (revelada=True, revelada_en)
+        sin modificar la clave digital inmutable.
+        """
+        try:
+            registro = (
+                self.db.query(LicenciaUsuarioORM)
+                .filter(LicenciaUsuarioORM.licencia_id == licencia_id)
+                .first()
+            )
+            if registro is None:
+                return None
+
+            registro.revelada = True
+            registro.revelada_en = fecha_revelacion
+            self.db.commit()
+            self.db.refresh(registro)
+            return self._licencia_a_dominio(registro)
         except SQLAlchemyError as error:
             self.db.rollback()
             raise ErrorAplicacion(503, mensaje_error_bd) from error

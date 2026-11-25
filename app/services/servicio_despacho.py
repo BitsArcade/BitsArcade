@@ -1,5 +1,5 @@
 """
-Servicio de aplicación para MOD-06 Despacho (HU-41 y HU-42).
+Servicio de aplicación para MOD-06 Despacho y Biblioteca (HU-41 a HU-43).
 """
 import uuid
 from datetime import datetime, timezone
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.respuestas import ErrorAplicacion
 from app.domain.despacho import (
+    INSTRUCCION_ACTIVACION_ESTANDAR,
     DespachoOrden,
     EstadoDespacho,
     LicenciaUsuario,
@@ -173,14 +174,14 @@ class ServicioDespacho:
     def __init__(
         self,
         repositorio: RepositorioDespacho,
-        adaptador_inventario: AdaptadorOrdenYInventarioDespacho,
+        adaptador_inventario: Optional[AdaptadorOrdenYInventarioDespacho] = None,
         adaptador_ordenes: Optional[AdaptadorOrdenesCOM09] = None,
     ):
         self.repositorio = repositorio
         self.adaptador_inventario = adaptador_inventario
         if adaptador_ordenes is not None:
             self.adaptador_ordenes = adaptador_ordenes
-        elif hasattr(adaptador_inventario, "db"):
+        elif adaptador_inventario is not None and hasattr(adaptador_inventario, "db"):
             self.adaptador_ordenes = AdaptadorOrdenesLocalCOM09(adaptador_inventario.db)
         else:
             self.adaptador_ordenes = None
@@ -238,6 +239,11 @@ class ServicioDespacho:
         if existente is not None:
             return self._serializar_despacho(existente)
 
+        if self.adaptador_inventario is None:
+            raise ErrorAplicacion(
+                503, "No fue posible procesar el despacho de la orden"
+            )
+
         items_confirmados = self.adaptador_inventario.validar_y_confirmar_keys(solicitud)
 
         ahora = datetime.now(timezone.utc)
@@ -289,3 +295,43 @@ class ServicioDespacho:
             )
 
         return self._serializar_despacho(guardado)
+
+    def revelar_clave_licencia(
+        self,
+        licencia_id: str,
+        usuario_id: int,
+    ) -> dict[str, Any]:
+        """
+        HU-43: Revela de forma segura la clave digital de una licencia perteneciente
+        al usuario autenticado, formateada en grupos de 4 caracteres con guiones,
+        registrando auditoría de visualización (reveladaEn).
+        """
+        licencia = self.repositorio.obtener_licencia_por_id(licencia_id)
+        licencia_validada = ReglasDespacho.validar_propiedad_licencia(
+            licencia=licencia,
+            usuario_id=usuario_id,
+        )
+
+        clave_formateada = ReglasDespacho.formatear_clave_legible(
+            licencia_validada.clave_digital
+        )
+
+        ahora = datetime.now(timezone.utc)
+        actualizada = self.repositorio.registrar_revelacion_licencia(
+            licencia_id=licencia_validada.licencia_id,
+            fecha_revelacion=ahora,
+        )
+        licencia_final = actualizada or licencia_validada
+        fecha_iso = (
+            licencia_final.revelada_en.isoformat()
+            if licencia_final.revelada_en is not None
+            else ahora.isoformat()
+        )
+
+        return {
+            "licenciaId": licencia_final.licencia_id,
+            "juegoId": licencia_final.juego_id,
+            "claveFormateada": clave_formateada,
+            "instruccionActivacion": INSTRUCCION_ACTIVACION_ESTANDAR,
+            "reveladaEn": fecha_iso,
+        }

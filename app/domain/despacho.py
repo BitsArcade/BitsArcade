@@ -2,6 +2,7 @@
 Dominio, modelos ORM, esquemas Pydantic y reglas de negocio de MOD-06 Despacho (HU-41 a HU-46).
 """
 import hashlib
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,10 +10,14 @@ from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String
 
 from app.core.base_datos import Base
 from app.core.respuestas import ErrorAplicacion
+
+INSTRUCCION_ACTIVACION_ESTANDAR = (
+    "Copia esta clave y actívala en tu cuenta de Steam/Epic antes de compartir pantalla"
+)
 
 
 class EstadoDespacho(str, Enum):
@@ -130,6 +135,30 @@ class ReglasDespacho:
         huella = hashlib.sha256(semilla).hexdigest()
         return clave_plana, clave_enmascarada, huella
 
+    @staticmethod
+    def formatear_clave_legible(clave_cruda: str) -> str:
+        """
+        HU-43: Formatea la clave digital en grupos legibles de 4 caracteres
+        separados por guiones (XXXX-XXXX-XXXX-XXXX).
+        """
+        limpia = re.sub(r"[^A-Za-z0-9]", "", (clave_cruda or "").strip().upper())
+        if not limpia:
+            raise ErrorAplicacion(503, "No fue posible revelar la clave digital")
+        grupos = [limpia[i : i + 4] for i in range(0, len(limpia), 4)]
+        return "-".join(grupos)
+
+    @staticmethod
+    def validar_propiedad_licencia(
+        licencia: Optional[LicenciaUsuario], usuario_id: int
+    ) -> LicenciaUsuario:
+        """
+        HU-43: Verifica que la licencia exista y pertenezca al usuario autenticado.
+        Si no existe o es de otro usuario, responde 404 para evitar enumeración.
+        """
+        if licencia is None or licencia.usuario_id != usuario_id:
+            raise ErrorAplicacion(404, "La licencia indicada no existe")
+        return licencia
+
 
 # ==============================================================================
 # ESQUEMAS PYDANTIC (Contratos COM-10 y API español camelCase)
@@ -173,4 +202,20 @@ class DatosDespachoCOM10(BaseModel):
 class RespuestaDespachoCOM10(BaseModel):
     message: str
     data: Optional[DatosDespachoCOM10] = None
+    success: bool
+
+
+class ClaveReveladaSalida(BaseModel):
+    """Contrato de salida de HU-43 al revelar de forma segura una clave digital."""
+
+    licenciaId: str
+    juegoId: int
+    claveFormateada: str
+    instruccionActivacion: str
+    reveladaEn: str
+
+
+class RespuestaRevelarClave(BaseModel):
+    message: str
+    data: Optional[ClaveReveladaSalida] = None
     success: bool
