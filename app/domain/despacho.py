@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 
 from app.core.base_datos import Base
 from app.core.respuestas import ErrorAplicacion
@@ -23,6 +23,7 @@ INSTRUCCION_ACTIVACION_ESTANDAR = (
 class EstadoDespacho(str, Enum):
     ACTIVADO = "ACTIVADO"
     ENTREGADO = "ENTREGADO"
+    ENTREGADA = "ENTREGADA"
     REQUIERE_REVISION = "REQUIERE_REVISION"
 
 
@@ -30,7 +31,7 @@ class EstadoDespacho(str, Enum):
 # MODELOS ORM (Base de Datos)
 # ==============================================================================
 class DespachoOrdenORM(Base):
-    """Registro maestro del despacho ejecutado para una orden pagada (COM-10 / HU-41)."""
+    """Registro maestro del despacho y compra ejecutada para una orden pagada (COM-10 / HU-41 / HU-47)."""
 
     __tablename__ = "despachos_ordenes"
 
@@ -39,6 +40,9 @@ class DespachoOrdenORM(Base):
     orden_id = Column(Integer, unique=True, nullable=False, index=True)
     usuario_id = Column(Integer, nullable=False, index=True)
     transaccion_id = Column(String(32), unique=True, nullable=False, index=True)
+    moneda = Column(String(3), nullable=False, default="COP")
+    tasa_cambio = Column(Float, nullable=False, default=1.0)
+    total = Column(Float, nullable=False, default=0.0)
     estado = Column(String(30), nullable=False, default=EstadoDespacho.ACTIVADO.value)
     notificado_externo = Column(Boolean, nullable=False, default=False)
     creado_en = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -65,6 +69,7 @@ class LicenciaUsuarioORM(Base):
     juego_id = Column(Integer, nullable=False, index=True)
     titulo_juego = Column(String(180), nullable=False)
     plataforma = Column(String(60), nullable=False, default="PC")
+    precio_unitario = Column(Float, nullable=False, default=0.0)
     reserva_id = Column(String(64), unique=True, nullable=True, index=True)
     key_inventario_id = Column(Integer, unique=True, nullable=True, index=True)
     clave_digital = Column(String(64), unique=True, nullable=False)
@@ -96,11 +101,12 @@ class LicenciaUsuario:
     revelada: bool
     revelada_en: Optional[datetime]
     asignada_en: datetime
+    precio_unitario: float = 0.0
 
 
 @dataclass(frozen=True)
 class DespachoOrden:
-    """Entidad de despacho de una orden con sus licencias asignadas."""
+    """Entidad de despacho y registro propio de compra de una orden en MOD-06."""
 
     despacho_id: str
     orden_id: int
@@ -110,6 +116,9 @@ class DespachoOrden:
     notificado_externo: bool
     creado_en: datetime
     licencias: list[LicenciaUsuario]
+    moneda: str = "COP"
+    tasa_cambio: float = 1.0
+    total: float = 0.0
 
 
 class ReglasDespacho:
@@ -161,6 +170,29 @@ class ReglasDespacho:
         if licencia is None or licencia.usuario_id != usuario_id:
             raise ErrorAplicacion(404, "La licencia indicada no existe")
         return licencia
+
+    @staticmethod
+    def validar_propiedad_compra(
+        compra: Optional[DespachoOrden], usuario_id: int
+    ) -> DespachoOrden:
+        """
+        HU-47: Verifica que el registro de compra exista en MOD-06 y pertenezca
+        al usuario autenticado; en caso contrario responde 404.
+        """
+        if compra is None or compra.usuario_id != usuario_id:
+            raise ErrorAplicacion(404, "La compra indicada no existe")
+        return compra
+
+    @staticmethod
+    def normalizar_estado_orden_compra(estado_despacho: EstadoDespacho) -> str:
+        """Mapea el estado interno del despacho al estado de orden entregado en el historial."""
+        if estado_despacho in (
+            EstadoDespacho.ACTIVADO,
+            EstadoDespacho.ENTREGADO,
+            EstadoDespacho.ENTREGADA,
+        ):
+            return "ENTREGADA"
+        return estado_despacho.value
 
     @staticmethod
     def filtrar_biblioteca_usuario(
@@ -316,6 +348,36 @@ class LicenciaBibliotecaSalida(BaseModel):
 class RespuestaBibliotecaLicencias(BaseModel):
     message: str
     data: list[LicenciaBibliotecaSalida]
+    success: bool
+
+
+class ItemDetalleCompraSalida(BaseModel):
+    """Ítem de compra histórica con clave enmascarada (HU-47)."""
+
+    juegoId: int
+    titulo: str
+    precioUnitario: float
+    claveLicencia: str
+
+
+class DatosDetalleCompraSalida(BaseModel):
+    """Contrato de salida de detalle de compra pasada en MOD-06 (HU-47)."""
+
+    ordenId: int
+    fecha: str
+    moneda: str
+    total: float
+    tasaCambio: float
+    transaccionId: str
+    estadoOrden: str
+    items: list[ItemDetalleCompraSalida]
+
+
+class RespuestaDetalleCompra(BaseModel):
+    """Contrato estándar de respuesta de HU-47."""
+
+    message: str
+    data: Optional[DatosDetalleCompraSalida] = None
     success: bool
 
 

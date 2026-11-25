@@ -1,5 +1,5 @@
 """
-Repositorio de persistencia para MOD-06 Despacho (HU-41 a HU-50).
+Repositorio de persistencia para MOD-06 Despacho y Biblioteca (HU-41 a HU-50).
 """
 import hashlib
 from datetime import datetime, timezone
@@ -18,7 +18,6 @@ from app.domain.despacho import (
     LicenciaUsuarioORM,
 )
 from app.domain.inventario import KeyLicencia
-from app.domain.orden import Orden
 
 
 class RepositorioDespacho:
@@ -26,57 +25,56 @@ class RepositorioDespacho:
         self.db = db
 
     @staticmethod
-    def _licencia_a_dominio(modelo: LicenciaUsuarioORM) -> LicenciaUsuario:
-        asignada_utc = (
-            modelo.asignada_en.replace(tzinfo=timezone.utc)
-            if modelo.asignada_en.tzinfo is None
-            else modelo.asignada_en
-        )
-        revelada_utc = None
-        if modelo.revelada_en is not None:
-            revelada_utc = (
-                modelo.revelada_en.replace(tzinfo=timezone.utc)
-                if modelo.revelada_en.tzinfo is None
-                else modelo.revelada_en
-            )
+    def _normalizar_fecha(valor: Optional[datetime]) -> Optional[datetime]:
+        if valor is None:
+            return None
+        if valor.tzinfo is None:
+            return valor.replace(tzinfo=timezone.utc)
+        return valor
+
+    @classmethod
+    def _a_entidad_licencia(cls, orm: LicenciaUsuarioORM) -> LicenciaUsuario:
         return LicenciaUsuario(
-            licencia_id=modelo.licencia_id,
-            despacho_id=modelo.despacho_id,
-            orden_id=modelo.orden_id,
-            usuario_id=modelo.usuario_id,
-            juego_id=modelo.juego_id,
-            titulo_juego=modelo.titulo_juego,
-            plataforma=modelo.plataforma,
-            reserva_id=modelo.reserva_id,
-            key_inventario_id=modelo.key_inventario_id,
-            clave_digital=modelo.clave_digital,
-            clave_enmascarada=modelo.clave_enmascarada,
-            revelada=modelo.revelada,
-            revelada_en=revelada_utc,
-            asignada_en=asignada_utc,
+            licencia_id=orm.licencia_id,
+            despacho_id=orm.despacho_id,
+            orden_id=orm.orden_id,
+            usuario_id=orm.usuario_id,
+            juego_id=orm.juego_id,
+            titulo_juego=orm.titulo_juego,
+            plataforma=orm.plataforma,
+            reserva_id=orm.reserva_id,
+            key_inventario_id=orm.key_inventario_id,
+            clave_digital=orm.clave_digital,
+            clave_enmascarada=orm.clave_enmascarada,
+            revelada=bool(orm.revelada),
+            revelada_en=cls._normalizar_fecha(orm.revelada_en),
+            asignada_en=cls._normalizar_fecha(orm.asignada_en)
+            or datetime.now(timezone.utc),
+            precio_unitario=float(getattr(orm, "precio_unitario", 0.0) or 0.0),
         )
 
-    def _despacho_a_dominio(self, modelo: DespachoOrdenORM) -> DespachoOrden:
-        creado_utc = (
-            modelo.creado_en.replace(tzinfo=timezone.utc)
-            if modelo.creado_en.tzinfo is None
-            else modelo.creado_en
-        )
-        registros_licencias = (
-            self.db.query(LicenciaUsuarioORM)
-            .filter(LicenciaUsuarioORM.despacho_id == modelo.despacho_id)
-            .order_by(LicenciaUsuarioORM.id.asc())
-            .all()
-        )
+    @classmethod
+    def _a_entidad_despacho(
+        cls, orm: DespachoOrdenORM, licencias_orm: list[LicenciaUsuarioORM]
+    ) -> DespachoOrden:
+        try:
+            estado = EstadoDespacho(orm.estado)
+        except ValueError:
+            estado = EstadoDespacho.ACTIVADO
+
         return DespachoOrden(
-            despacho_id=modelo.despacho_id,
-            orden_id=modelo.orden_id,
-            usuario_id=modelo.usuario_id,
-            transaccion_id=modelo.transaccion_id,
-            estado=EstadoDespacho(modelo.estado),
-            notificado_externo=modelo.notificado_externo,
-            creado_en=creado_utc,
-            licencias=[self._licencia_a_dominio(lic) for lic in registros_licencias],
+            despacho_id=orm.despacho_id,
+            orden_id=orm.orden_id,
+            usuario_id=orm.usuario_id,
+            transaccion_id=orm.transaccion_id,
+            estado=estado,
+            notificado_externo=bool(orm.notificado_externo),
+            creado_en=cls._normalizar_fecha(orm.creado_en)
+            or datetime.now(timezone.utc),
+            licencias=[cls._a_entidad_licencia(lic) for lic in licencias_orm],
+            moneda=getattr(orm, "moneda", "COP") or "COP",
+            tasa_cambio=float(getattr(orm, "tasa_cambio", 1.0) or 1.0),
+            total=float(getattr(orm, "total", 0.0) or 0.0),
         )
 
     def obtener_despacho_por_orden_id(
@@ -85,53 +83,56 @@ class RepositorioDespacho:
         mensaje_error_bd: str = "No fue posible procesar el despacho de la orden",
     ) -> Optional[DespachoOrden]:
         try:
-            registro = (
+            despacho_orm = (
                 self.db.query(DespachoOrdenORM)
                 .filter(DespachoOrdenORM.orden_id == orden_id)
                 .first()
             )
-            return self._despacho_a_dominio(registro) if registro else None
+            if despacho_orm is None:
+                return None
+
+            licencias_orm = (
+                self.db.query(LicenciaUsuarioORM)
+                .filter(LicenciaUsuarioORM.orden_id == orden_id)
+                .order_by(LicenciaUsuarioORM.id.asc())
+                .all()
+            )
+            return self._a_entidad_despacho(despacho_orm, licencias_orm)
         except SQLAlchemyError as error:
             raise ErrorAplicacion(503, mensaje_error_bd) from error
 
     def guardar_despacho_con_licencias(
-        self,
-        despacho: DespachoOrden,
-        mensaje_error_bd: str = "No fue posible procesar el despacho de la orden",
+        self, despacho: DespachoOrden
     ) -> DespachoOrden:
         try:
-            existente = (
-                self.db.query(DespachoOrdenORM)
-                .filter(DespachoOrdenORM.orden_id == despacho.orden_id)
-                .first()
-            )
-            if existente is not None:
-                return self._despacho_a_dominio(existente)
-
-            nuevo_despacho = DespachoOrdenORM(
+            despacho_orm = DespachoOrdenORM(
                 despacho_id=despacho.despacho_id,
                 orden_id=despacho.orden_id,
                 usuario_id=despacho.usuario_id,
                 transaccion_id=despacho.transaccion_id,
+                moneda=despacho.moneda,
+                tasa_cambio=despacho.tasa_cambio,
+                total=despacho.total,
                 estado=despacho.estado.value,
                 notificado_externo=despacho.notificado_externo,
                 creado_en=despacho.creado_en,
             )
-            self.db.add(nuevo_despacho)
+            self.db.add(despacho_orm)
 
+            licencias_orm: list[LicenciaUsuarioORM] = []
             for lic in despacho.licencias:
-                semilla_huella = (
-                    f"{lic.orden_id}:{lic.juego_id}:{lic.licencia_id}:{lic.clave_digital}"
-                )
-                huella = hashlib.sha256(semilla_huella.encode("utf-8")).hexdigest()
-                nueva_licencia = LicenciaUsuarioORM(
+                huella = hashlib.sha256(
+                    f"{lic.orden_id}:{lic.juego_id}:{lic.clave_digital}".encode("utf-8")
+                ).hexdigest()
+                lic_orm = LicenciaUsuarioORM(
                     licencia_id=lic.licencia_id,
-                    despacho_id=despacho.despacho_id,
+                    despacho_id=lic.despacho_id,
                     orden_id=lic.orden_id,
                     usuario_id=lic.usuario_id,
                     juego_id=lic.juego_id,
                     titulo_juego=lic.titulo_juego,
                     plataforma=lic.plataforma,
+                    precio_unitario=lic.precio_unitario,
                     reserva_id=lic.reserva_id,
                     key_inventario_id=lic.key_inventario_id,
                     clave_digital=lic.clave_digital,
@@ -141,11 +142,14 @@ class RepositorioDespacho:
                     revelada_en=lic.revelada_en,
                     asignada_en=lic.asignada_en,
                 )
-                self.db.add(nueva_licencia)
+                self.db.add(lic_orm)
+                licencias_orm.append(lic_orm)
 
             self.db.commit()
-            self.db.refresh(nuevo_despacho)
-            return self._despacho_a_dominio(nuevo_despacho)
+            self.db.refresh(despacho_orm)
+            for item in licencias_orm:
+                self.db.refresh(item)
+            return self._a_entidad_despacho(despacho_orm, licencias_orm)
         except IntegrityError as error:
             self.db.rollback()
             raise ErrorAplicacion(
@@ -153,140 +157,115 @@ class RepositorioDespacho:
             ) from error
         except SQLAlchemyError as error:
             self.db.rollback()
-            raise ErrorAplicacion(503, mensaje_error_bd) from error
+            raise ErrorAplicacion(
+                503, "No fue posible procesar el despacho de la orden"
+            ) from error
 
     def obtener_licencia_por_id(
-        self,
-        licencia_id: str,
-        mensaje_error_bd: str = "No fue posible revelar la clave digital",
+        self, licencia_id: str
     ) -> Optional[LicenciaUsuario]:
-        """HU-43: Consulta una licencia asignada por su identificador público (licenciaId)."""
         try:
-            registro = (
+            lic_orm = (
                 self.db.query(LicenciaUsuarioORM)
                 .filter(LicenciaUsuarioORM.licencia_id == licencia_id)
                 .first()
             )
-            return self._licencia_a_dominio(registro) if registro else None
+            if lic_orm is None:
+                return None
+            return self._a_entidad_licencia(lic_orm)
         except SQLAlchemyError as error:
-            raise ErrorAplicacion(503, mensaje_error_bd) from error
+            raise ErrorAplicacion(
+                503, "No fue posible revelar la clave digital"
+            ) from error
 
     def registrar_revelacion_licencia(
-        self,
-        licencia_id: str,
-        fecha_revelacion: datetime,
-        mensaje_error_bd: str = "No fue posible revelar la clave digital",
+        self, licencia_id: str, fecha_revelacion: datetime
     ) -> Optional[LicenciaUsuario]:
-        """
-        HU-43: Registra auditoría de visualización (revelada=True, revelada_en)
-        sin modificar la clave digital inmutable.
-        """
         try:
-            registro = (
+            lic_orm = (
                 self.db.query(LicenciaUsuarioORM)
                 .filter(LicenciaUsuarioORM.licencia_id == licencia_id)
                 .first()
             )
-            if registro is None:
+            if lic_orm is None:
                 return None
 
-            registro.revelada = True
-            registro.revelada_en = fecha_revelacion
-            self.db.commit()
-            self.db.refresh(registro)
-            return self._licencia_a_dominio(registro)
+            if not lic_orm.revelada or lic_orm.revelada_en is None:
+                lic_orm.revelada = True
+                lic_orm.revelada_en = fecha_revelacion
+                self.db.commit()
+                self.db.refresh(lic_orm)
+
+            return self._a_entidad_licencia(lic_orm)
         except SQLAlchemyError as error:
             self.db.rollback()
-            raise ErrorAplicacion(503, mensaje_error_bd) from error
+            raise ErrorAplicacion(
+                503, "No fue posible revelar la clave digital"
+            ) from error
 
     def listar_licencias_por_usuario(
-        self,
-        usuario_id: int,
-        mensaje_error_bd: str = "No fue posible consultar la biblioteca de licencias",
+        self, usuario_id: int
     ) -> list[LicenciaUsuario]:
-        """Lista todas las licencias digitales asignadas al usuario autenticado."""
         try:
-            registros = (
+            filas = (
                 self.db.query(LicenciaUsuarioORM)
                 .filter(LicenciaUsuarioORM.usuario_id == usuario_id)
-                .order_by(LicenciaUsuarioORM.asignada_en.desc(), LicenciaUsuarioORM.id.desc())
+                .order_by(
+                    LicenciaUsuarioORM.asignada_en.desc(),
+                    LicenciaUsuarioORM.id.desc(),
+                )
                 .all()
             )
-            return [self._licencia_a_dominio(reg) for reg in registros]
+            return [self._a_entidad_licencia(fila) for fila in filas]
         except SQLAlchemyError as error:
-            raise ErrorAplicacion(503, mensaje_error_bd) from error
+            raise ErrorAplicacion(
+                503, "No fue posible consultar la biblioteca de licencias"
+            ) from error
 
     def obtener_reservas_y_keys_de_orden(
         self,
         orden_id: int,
         mensaje_error_bd: str = "No fue posible validar la entrega",
     ) -> tuple[list[str], list[int]]:
-        """
-        HU-45: Obtiene los reservaId y key_inventario_id vinculados a una orden
-        consultando tanto asignaciones previas como reservas en inventario/orden.
-        """
         try:
-            reserva_ids: list[str] = []
+            reservas: list[str] = []
             key_ids: list[int] = []
 
-            def _agregar_reserva(valor: Optional[str]) -> None:
-                if valor and valor not in reserva_ids:
-                    reserva_ids.append(valor)
-
-            def _agregar_key(valor: Optional[int]) -> None:
-                if isinstance(valor, int) and valor not in key_ids:
-                    key_ids.append(valor)
-
-            # 1. Asignaciones ya registradas en MOD-06 para esta orden
-            asignaciones_orden = (
+            asignaciones = (
                 self.db.query(LicenciaUsuarioORM)
                 .filter(LicenciaUsuarioORM.orden_id == orden_id)
-                .order_by(LicenciaUsuarioORM.id.asc())
                 .all()
             )
-            for asig in asignaciones_orden:
-                _agregar_reserva(asig.reserva_id)
-                _agregar_key(asig.key_inventario_id)
+            for asig in asignaciones:
+                if asig.reserva_id and asig.reserva_id not in reservas:
+                    reservas.append(asig.reserva_id)
+                if asig.key_inventario_id and asig.key_inventario_id not in key_ids:
+                    key_ids.append(asig.key_inventario_id)
 
-            # 2. Claves reservadas en MOD-03 asociadas a esta orden
             if hasattr(KeyLicencia, "orden_id"):
-                keys_orden = (
+                keys = (
                     self.db.query(KeyLicencia)
                     .filter(KeyLicencia.orden_id == orden_id)
-                    .order_by(KeyLicencia.id.asc())
                     .all()
                 )
-                for key_obj in keys_orden:
-                    _agregar_key(getattr(key_obj, "id", None))
-                    _agregar_reserva(
-                        getattr(key_obj, "reserva_id", None)
-                        or getattr(key_obj, "codigo_reserva", None)
-                    )
+                for key_obj in keys:
+                    if key_obj.id and key_obj.id not in key_ids:
+                        key_ids.append(key_obj.id)
+                    reserva_key = getattr(key_obj, "reserva_id", None)
+                    if reserva_key and reserva_key not in reservas:
+                        reservas.append(reserva_key)
 
-            # 3. Líneas/ítems de la orden en MOD-04 si tienen reserva_id
-            orden_obj = self.db.query(Orden).filter(Orden.id == orden_id).first()
-            if orden_obj is not None:
-                for attr_relacion in ("items", "detalles", "lineas"):
-                    coleccion = getattr(orden_obj, attr_relacion, None)
-                    if isinstance(coleccion, list):
-                        for linea in coleccion:
-                            _agregar_reserva(getattr(linea, "reserva_id", None))
-
-            return reserva_ids, key_ids
+            return reservas, key_ids
         except SQLAlchemyError as error:
             raise ErrorAplicacion(503, mensaje_error_bd) from error
 
     def consultar_asignaciones_previas(
         self,
         orden_id: int,
-        reserva_ids: list[str],
+        reserva_ids: Optional[list[str]] = None,
         key_ids: Optional[list[int]] = None,
         mensaje_error_bd: str = "No fue posible validar la entrega",
     ) -> list[LicenciaUsuario]:
-        """
-        HU-45: Busca en licencias_usuario cualquier entrega previa asociada a la orden,
-        a alguno de los reservaId o a alguna key_inventario_id.
-        """
         try:
             condiciones = [LicenciaUsuarioORM.orden_id == orden_id]
             if reserva_ids:
@@ -294,12 +273,12 @@ class RepositorioDespacho:
             if key_ids:
                 condiciones.append(LicenciaUsuarioORM.key_inventario_id.in_(key_ids))
 
-            registros = (
+            filas = (
                 self.db.query(LicenciaUsuarioORM)
                 .filter(or_(*condiciones))
                 .order_by(LicenciaUsuarioORM.id.asc())
                 .all()
             )
-            return [self._licencia_a_dominio(reg) for reg in registros]
+            return [self._a_entidad_licencia(fila) for fila in filas]
         except SQLAlchemyError as error:
             raise ErrorAplicacion(503, mensaje_error_bd) from error

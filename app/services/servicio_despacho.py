@@ -156,6 +156,7 @@ class AdaptadorOrdenYInventarioLocal:
                         "reservaId": item.reservaId,
                         "keyInventarioId": key_obj.id,
                         "plataforma": getattr(key_obj, "plataforma", "PC") or "PC",
+                        "precioUnitario": float(item.precioUnitario),
                     }
                 )
 
@@ -295,6 +296,9 @@ class ServicioDespacho:
             )
 
         items_confirmados = self.adaptador_inventario.validar_y_confirmar_keys(solicitud)
+        precios_por_juego = {
+            item.juegoId: float(item.precioUnitario) for item in solicitud.items
+        }
 
         ahora = datetime.now(timezone.utc)
         despacho_id = f"DSP-{uuid.uuid4().hex[:8].upper()}"
@@ -305,6 +309,12 @@ class ServicioDespacho:
                 orden_id=solicitud.ordenId,
                 juego_id=item_conf["juegoId"],
                 indice=idx,
+            )
+            precio_unit = float(
+                item_conf.get(
+                    "precioUnitario",
+                    precios_por_juego.get(item_conf["juegoId"], 0.0),
+                )
             )
             licencias.append(
                 LicenciaUsuario(
@@ -322,6 +332,7 @@ class ServicioDespacho:
                     revelada=False,
                     revelada_en=None,
                     asignada_en=ahora,
+                    precio_unitario=precio_unit,
                 )
             )
 
@@ -334,6 +345,9 @@ class ServicioDespacho:
             notificado_externo=False,
             creado_en=ahora,
             licencias=licencias,
+            moneda=solicitud.moneda,
+            tasa_cambio=float(solicitud.tasaCambio),
+            total=float(solicitud.total),
         )
         guardado = self.repositorio.guardar_despacho_con_licencias(nuevo_despacho)
 
@@ -416,3 +430,46 @@ class ServicioDespacho:
             }
             for lic in licencias
         ]
+
+    def consultar_detalle_compra_pasada(
+        self,
+        orden_id: int,
+        usuario_id: int,
+    ) -> dict[str, Any]:
+        """
+        HU-47: Consulta el detalle de una orden histórica desde el registro propio
+        de MOD-06 (sin consultar MOD-04 ni MOD-05), validando propiedad del usuario
+        autenticado y entregando las claves enmascaradas (RN-11).
+        """
+        compra = self.repositorio.obtener_despacho_por_orden_id(
+            orden_id=orden_id,
+            mensaje_error_bd="No fue posible consultar la compra",
+        )
+        compra_validada = ReglasDespacho.validar_propiedad_compra(
+            compra=compra,
+            usuario_id=usuario_id,
+        )
+
+        estado_orden = ReglasDespacho.normalizar_estado_orden_compra(
+            compra_validada.estado
+        )
+        items = [
+            {
+                "juegoId": lic.juego_id,
+                "titulo": lic.titulo_juego,
+                "precioUnitario": float(lic.precio_unitario),
+                "claveLicencia": lic.clave_enmascarada,
+            }
+            for lic in compra_validada.licencias
+        ]
+
+        return {
+            "ordenId": compra_validada.orden_id,
+            "fecha": compra_validada.creado_en.isoformat(),
+            "moneda": compra_validada.moneda,
+            "total": float(compra_validada.total),
+            "tasaCambio": float(compra_validada.tasa_cambio),
+            "transaccionId": compra_validada.transaccion_id,
+            "estadoOrden": estado_orden,
+            "items": items,
+        }

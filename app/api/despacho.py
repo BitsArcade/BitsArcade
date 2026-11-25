@@ -12,10 +12,12 @@ from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.despacho import (
     ClaveReveladaSalida,
     DatosDespachoCOM10,
+    DatosDetalleCompraSalida,
     DatosElegibilidadEntrega,
     LicenciaBibliotecaSalida,
     RespuestaBibliotecaLicencias,
     RespuestaDespachoCOM10,
+    RespuestaDetalleCompra,
     RespuestaElegibilidadEntrega,
     RespuestaRevelarClave,
     SolicitudDespachoCOM10,
@@ -224,6 +226,42 @@ def revelar_clave_licencia(
         status_code=status.HTTP_200_OK,
         content={
             "message": "Clave digital revelada",
+            "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.get(
+    "/compras/{ordenId}",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaDetalleCompra,
+    summary="Consultar detalle de compra pasada (HU-47)",
+    description=(
+        "Permite al cliente autenticado consultar el detalle de una orden histórica "
+        "desde el registro propio de MOD-06 (fecha, moneda, total, tasa de cambio, "
+        "transacción e ítems con claves enmascaradas)."
+    ),
+    responses={
+        401: {"description": "Token inválido, expirado o ausente"},
+        404: {"description": "La compra indicada no existe"},
+        503: {"description": "No fue posible consultar la compra"},
+    },
+)
+def consultar_detalle_compra_pasada(
+    ordenId: int,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    resultado = servicio.consultar_detalle_compra_pasada(
+        orden_id=ordenId,
+        usuario_id=usuario.id,
+    )
+    datos = DatosDetalleCompraSalida(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Consulta de compra exitosa",
             "data": datos.model_dump(),
             "success": True,
         },
