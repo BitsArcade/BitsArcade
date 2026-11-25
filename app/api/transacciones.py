@@ -1,8 +1,8 @@
 """
-Endpoints de MOD-05 Transacciones (HU-36 y HU-37).
+Endpoints de MOD-05 Transacciones (HU-36, HU-37 y HU-38).
 """
 import json
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse
@@ -13,10 +13,13 @@ from app.core.base_datos import get_db
 from app.core.respuestas import ErrorAplicacion
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.transacciones import (
-    DatosPagoAprobado,
+    DatosEstadoPago,
     DatosPagoEnProceso,
+    ReglasTransaccion,
+    RespuestaEstadoPago,
     RespuestaIniciarPago,
     RespuestaPagoAprobado,
+    RespuestaPagoRechazado,
     SolicitudIniciarPago,
     SolicitudNotificacionPasarela,
 )
@@ -85,12 +88,13 @@ async def iniciar_pago(
 @enrutador_transacciones.post(
     "/notificacion-pasarela",
     status_code=status.HTTP_200_OK,
-    response_model=RespuestaPagoAprobado,
-    summary="Recibir y procesar notificación de la pasarela de pagos (HU-37)",
+    response_model=Union[RespuestaPagoAprobado, RespuestaPagoRechazado],
+    summary="Recibir y procesar notificación de la pasarela de pagos (HU-37 y HU-38)",
     description=(
-        "Webhook firmado con HMAC-SHA256 en el header X-Signature. Procesa la aprobación "
-        "de pago de forma idempotente, genera el comprobante digital (HU-39), notifica a "
-        "Órdenes el estado PAGADA (COM-09 / HU-40) y activa el despacho (COM-10)."
+        "Webhook firmado con HMAC-SHA256 en el header X-Signature. Procesa tanto "
+        "aprobaciones (APROBADO -> HU-37) como rechazos, fallos y expiraciones "
+        "(RECHAZADO, FALLIDO, EXPIRADO -> HU-38), delegando el estado final de la orden "
+        "a COM-09 (HU-40)."
     ),
 )
 async def notificacion_pasarela(
@@ -100,31 +104,58 @@ async def notificacion_pasarela(
 ):
     cuerpo_crudo = await request.body()
 
-    # Validamos firma HMAC antes de confiar en el contenido del webhook
+    # Validamos firma HMAC antes de confiar en el cuerpo del webhook (401 prioritario)
+    ReglasTransaccion.verificar_firma_hmac(
+        cuerpo_crudo=cuerpo_crudo,
+        firma_recibida=x_signature,
+        secreto=servicio.secreto_webhook,
+    )
+
     try:
         datos_json = json.loads(cuerpo_crudo.decode("utf-8")) if cuerpo_crudo else {}
         notificacion = SolicitudNotificacionPasarela(**datos_json)
     except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as error:
-        # Si la firma es inválida, debe prevalecer el 401
-        from app.domain.transacciones import ReglasTransaccion
-
-        ReglasTransaccion.verificar_firma_hmac(
-            cuerpo_crudo=cuerpo_crudo,
-            firma_recibida=x_signature,
-            secreto=servicio.secreto_webhook,
-        )
         raise ErrorAplicacion(400, "Cuerpo de notificación inválido") from error
 
-    resultado = await servicio.procesar_aprobacion_pasarela(
+    mensaje, datos = await servicio.procesar_notificacion_pasarela(
         cuerpo_crudo=cuerpo_crudo,
         firma_hmac=x_signature,
         notificacion=notificacion,
     )
-    datos = DatosPagoAprobado(**resultado)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
-            "message": "Pago aprobado procesado",
+            "message": mensaje,
+            "data": datos,
+            "success": True,
+        },
+    )
+
+
+@enrutador_transacciones.get(
+    "/{transaccionId}/estado",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaEstadoPago,
+    summary="Consultar el estado de una transacción de pago (HU-38)",
+    description=(
+        "Permite al cliente autenticado consultar el resultado actual de su transacción "
+        "(EN_PROCESO, APROBADA, FALLIDA, EXPIRADA o REQUIERE_REVISION) con un mensaje claro."
+    ),
+)
+def consultar_estado_pago(
+    transaccionId: str,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioTransacciones = Depends(obtener_servicio_transacciones),
+):
+    resultado = servicio.consultar_estado_transaccion(
+        transaccion_id=transaccionId,
+        usuario_id=usuario.id,
+    )
+    datos = DatosEstadoPago(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Consulta de estado de pago exitosa",
             "data": datos.model_dump(),
             "success": True,
         },

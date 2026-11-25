@@ -1,5 +1,5 @@
 """
-Servicio de aplicación para MOD-05 Transacciones (HU-36 y HU-37).
+Servicio de aplicación para MOD-05 Transacciones (HU-36, HU-37 y HU-38).
 """
 import uuid
 from datetime import datetime, timezone
@@ -115,13 +115,19 @@ class AdaptadorOrdenesLocal:
     async def notificar_resultado_com09(
         self, orden_id: int, nuevo_estado: str, transaccion_id: str
     ) -> bool:
+        mensaje_bd = (
+            "No fue posible procesar el rechazo del pago"
+            if nuevo_estado == "CANCELADA"
+            else "No fue posible procesar la aprobación del pago"
+        )
         try:
             orden = self.db.query(Orden).filter(Orden.id == orden_id).first()
             if orden is None:
                 return False
             if orden.estado == nuevo_estado:
                 return True
-            if orden.estado == "CANCELADA" and nuevo_estado == "PAGADA":
+            # CANCELADA es irreversible; PAGADA/ENTREGADA no pueden cancelarse desde pasarela
+            if orden.estado == "CANCELADA" or orden.estado in ("PAGADA", "ENTREGADA"):
                 raise ErrorAplicacion(409, "Transición de estado no permitida")
             orden.estado = nuevo_estado
             self.db.commit()
@@ -130,7 +136,7 @@ class AdaptadorOrdenesLocal:
             raise
         except SQLAlchemyError as error:
             self.db.rollback()
-            raise ErrorAplicacion(503, "No fue posible procesar la aprobación del pago") from error
+            raise ErrorAplicacion(503, mensaje_bd) from error
 
 
 class ClientePasarelaSimulada:
@@ -232,6 +238,35 @@ class ServicioTransacciones:
             estado=EstadoTransaccion.EN_PROCESO,
         )
         return self.repositorio.guardar(nueva_transaccion)
+
+    async def procesar_notificacion_pasarela(
+        self,
+        cuerpo_crudo: bytes,
+        firma_hmac: Optional[str],
+        notificacion: SolicitudNotificacionPasarela,
+    ) -> tuple[str, dict[str, Any]]:
+        estado_entrante = notificacion.estado.strip().upper()
+        if estado_entrante == "APROBADO":
+            datos = await self.procesar_aprobacion_pasarela(
+                cuerpo_crudo=cuerpo_crudo,
+                firma_hmac=firma_hmac,
+                notificacion=notificacion,
+            )
+            return "Pago aprobado procesado", datos
+
+        if estado_entrante in ReglasTransaccion.MAPEO_ESTADOS_NO_EXITOSOS:
+            return await self.procesar_rechazo_pasarela(
+                cuerpo_crudo=cuerpo_crudo,
+                firma_hmac=firma_hmac,
+                notificacion=notificacion,
+            )
+
+        ReglasTransaccion.verificar_firma_hmac(
+            cuerpo_crudo=cuerpo_crudo,
+            firma_recibida=firma_hmac,
+            secreto=self.secreto_webhook,
+        )
+        raise ErrorAplicacion(400, "Estado de notificación de pasarela no soportado")
 
     async def procesar_aprobacion_pasarela(
         self,
@@ -341,3 +376,84 @@ class ServicioTransacciones:
                 "estadoOrden": "PAGADA",
                 "estadoDespacho": "REQUIERE_REVISION",
             }
+
+    async def procesar_rechazo_pasarela(
+        self,
+        cuerpo_crudo: bytes,
+        firma_hmac: Optional[str],
+        notificacion: SolicitudNotificacionPasarela,
+    ) -> tuple[str, dict[str, str]]:
+        # 1. Validar firma HMAC en X-Signature (401 si es inválida o ausente)
+        ReglasTransaccion.verificar_firma_hmac(
+            cuerpo_crudo=cuerpo_crudo,
+            firma_recibida=firma_hmac,
+            secreto=self.secreto_webhook,
+        )
+
+        # 2. Mapear estado no exitoso (RECHAZADO/FALLIDO -> FALLIDA, EXPIRADO -> EXPIRADA)
+        estado_destino, mensaje_respuesta, mensaje_usuario = (
+            ReglasTransaccion.mapear_rechazo_pasarela(notificacion.estado)
+        )
+
+        # 3. Consultar transacción (404 si transaccionId es desconocido)
+        transaccion = self.repositorio.obtener_por_transaccion_id(
+            notificacion.transaccionId,
+            mensaje_error_bd="No fue posible procesar el rechazo del pago",
+        )
+        if transaccion is None:
+            raise ErrorAplicacion(404, "La transacción indicada no existe")
+
+        # 4. Idempotencia si ya fue resuelta con el mismo estado terminal
+        if transaccion.estado == estado_destino:
+            return mensaje_respuesta, {
+                "transaccionId": transaccion.transaccion_id,
+                "estado": estado_destino.value,
+                "estadoOrden": "CANCELADA",
+                "mensajeUsuario": transaccion.mensaje_usuario or mensaje_usuario,
+            }
+
+        # 5. Si ya fue resuelta con otro estado (ej. APROBADA), lanzar 409
+        if transaccion.estado != EstadoTransaccion.EN_PROCESO:
+            raise ErrorAplicacion(409, "La transacción ya fue resuelta con otro estado")
+
+        # 6. Registrar transacción FALLIDA o EXPIRADA
+        transaccion_actualizada = self.repositorio.actualizar_estado(
+            transaccion_id=transaccion.transaccion_id,
+            nuevo_estado=estado_destino,
+            referencia_pasarela=notificacion.referenciaPasarela,
+            mensaje_usuario=mensaje_usuario,
+            mensaje_error_bd="No fue posible procesar el rechazo del pago",
+        )
+
+        # 7. Delegar a HU-40 la cancelación de la orden (COM-09 CANCELADA; MOD-04 libera claves)
+        await self.adaptador_ordenes.notificar_resultado_com09(
+            orden_id=transaccion_actualizada.orden_id,
+            nuevo_estado="CANCELADA",
+            transaccion_id=transaccion_actualizada.transaccion_id,
+        )
+
+        return mensaje_respuesta, {
+            "transaccionId": transaccion_actualizada.transaccion_id,
+            "estado": estado_destino.value,
+            "estadoOrden": "CANCELADA",
+            "mensajeUsuario": mensaje_usuario,
+        }
+
+    def consultar_estado_transaccion(
+        self,
+        transaccion_id: str,
+        usuario_id: int,
+    ) -> dict[str, Any]:
+        transaccion = self.repositorio.obtener_por_transaccion_id(
+            transaccion_id,
+            mensaje_error_bd="No fue posible consultar el estado del pago",
+        )
+        if transaccion is None or transaccion.usuario_id != usuario_id:
+            raise ErrorAplicacion(404, "La transacción indicada no existe")
+
+        return {
+            "transaccionId": transaccion.transaccion_id,
+            "ordenId": transaccion.orden_id,
+            "estado": transaccion.estado.value,
+            "mensajeUsuario": ReglasTransaccion.obtener_mensaje_usuario(transaccion),
+        }

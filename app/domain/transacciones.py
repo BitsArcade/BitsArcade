@@ -110,6 +110,32 @@ class Comprobante:
 class ReglasTransaccion:
     MARGEN_MINIMO_EXPIRACION = timedelta(minutes=2)
 
+    MAPEO_ESTADOS_NO_EXITOSOS: dict[str, tuple[EstadoTransaccion, str, str]] = {
+        "RECHAZADO": (
+            EstadoTransaccion.FALLIDA,
+            "Pago rechazado procesado",
+            "El pago fue rechazado. Genera una nueva orden para reintentar.",
+        ),
+        "FALLIDO": (
+            EstadoTransaccion.FALLIDA,
+            "Pago fallido procesado",
+            "El pago falló durante el procesamiento. Genera una nueva orden para reintentar.",
+        ),
+        "EXPIRADO": (
+            EstadoTransaccion.EXPIRADA,
+            "Pago expirado procesado",
+            "El tiempo para completar el pago expiró. Genera una nueva orden para reintentar.",
+        ),
+    }
+
+    MENSAJES_POR_DEFECTO_ESTADO: dict[EstadoTransaccion, str] = {
+        EstadoTransaccion.EN_PROCESO: "El pago se encuentra en proceso de validación.",
+        EstadoTransaccion.APROBADA: "El pago fue aprobado exitosamente.",
+        EstadoTransaccion.FALLIDA: "El pago fue rechazado. Genera una nueva orden para reintentar.",
+        EstadoTransaccion.EXPIRADA: "El tiempo para completar el pago expiró. Genera una nueva orden para reintentar.",
+        EstadoTransaccion.REQUIERE_REVISION: "El pago fue aprobado pero la reserva expiró; requiere revisión.",
+    }
+
     @classmethod
     def validar_orden_cobrable(
         cls,
@@ -196,6 +222,24 @@ class ReglasTransaccion:
         ):
             raise ErrorAplicacion(409, "El monto o la moneda no coinciden con la orden")
 
+    @classmethod
+    def mapear_rechazo_pasarela(
+        cls, estado_pasarela: str
+    ) -> tuple[EstadoTransaccion, str, str]:
+        clave = estado_pasarela.strip().upper()
+        if clave not in cls.MAPEO_ESTADOS_NO_EXITOSOS:
+            raise ErrorAplicacion(400, "Estado de notificación de pasarela no soportado")
+        return cls.MAPEO_ESTADOS_NO_EXITOSOS[clave]
+
+    @classmethod
+    def obtener_mensaje_usuario(cls, transaccion: Transaccion) -> str:
+        if transaccion.mensaje_usuario:
+            return transaccion.mensaje_usuario
+        return cls.MENSAJES_POR_DEFECTO_ESTADO.get(
+            transaccion.estado,
+            "Estado de la transacción disponible.",
+        )
+
     @staticmethod
     def construir_payload_com10(
         transaccion: Transaccion,
@@ -262,4 +306,30 @@ class DatosPagoAprobado(BaseModel):
 class RespuestaPagoAprobado(BaseModel):
     message: str
     data: Optional[DatosPagoAprobado] = None
+    success: bool
+
+
+class DatosPagoRechazado(BaseModel):
+    transaccionId: str
+    estado: str
+    estadoOrden: str
+    mensajeUsuario: str
+
+
+class RespuestaPagoRechazado(BaseModel):
+    message: str
+    data: Optional[DatosPagoRechazado] = None
+    success: bool
+
+
+class DatosEstadoPago(BaseModel):
+    transaccionId: str
+    ordenId: int
+    estado: str
+    mensajeUsuario: str
+
+
+class RespuestaEstadoPago(BaseModel):
+    message: str
+    data: Optional[DatosEstadoPago] = None
     success: bool
