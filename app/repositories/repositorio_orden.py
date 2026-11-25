@@ -1,7 +1,11 @@
+from datetime import datetime
+from typing import Optional
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.domain.orden import (
+    ESTADO_ORDEN_ENTREGADA,
     ESTADOS_ORDEN_ACTIVAS_PREVENTA,
     ItemOrden,
     Orden,
@@ -46,8 +50,16 @@ class RepositorioOrden:
         )
         return int(total or 0)
 
-    def actualizar_estado(self, sesion: Session, orden: Orden, nuevo_estado: str) -> Orden:
+    def actualizar_estado(
+        self,
+        sesion: Session,
+        orden: Orden,
+        nuevo_estado: str,
+        entregada_en: Optional[datetime] = None,
+    ) -> Orden:
         orden.estado = nuevo_estado
+        if nuevo_estado == ESTADO_ORDEN_ENTREGADA and entregada_en is not None:
+            orden.entregada_en = entregada_en
         sesion.commit()
         sesion.refresh(orden)
         return orden

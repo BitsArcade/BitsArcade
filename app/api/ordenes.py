@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.base_datos import get_db
 from app.core.respuestas import Respuesta
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.orden import (
+    ESTADO_ORDEN_ENTREGADA,
     ActualizarEstadoOrdenEntrada,
     CancelacionOrdenSalida,
+    CierreOrdenEntregadaSalida,
     EstadoOrdenInternoSalida,
     LiquidacionOrdenSalida,
     OrdenSalida,
@@ -20,12 +23,13 @@ enrutador_ordenes = APIRouter(
 
 enrutador_ordenes_interno = APIRouter(
     prefix="/interno/v1/ordenes",
-    tags=["Contratos Internos MOD-04 (HU-35)"],
+    tags=["Contratos Internos MOD-04 (HU-35 y HU-42)"],
 )
 
 servicio_orden = ServicioOrden()
 
 ERROR_401 = {"description": "Token inválido, expirado o ausente"}
+MODULOS_AUTORIZADOS_COM09 = {"MOD-05", "MOD-06"}
 
 
 @enrutador_ordenes.post(
@@ -105,18 +109,46 @@ def cancelar_orden_compra(
 
 @enrutador_ordenes_interno.patch(
     "/{ordenId}/estado",
-    response_model=EstadoOrdenInternoSalida,
+    response_model=EstadoOrdenInternoSalida | Respuesta[CierreOrdenEntregadaSalida],
     responses={
-        400: {"description": "Estado destino no válido"},
+        400: {"description": "Estado destino no válido o entregadaEn ausente"},
+        403: {"description": "Módulo interno no autorizado para COM-09"},
         404: {"description": "La orden indicada no existe"},
-        409: {"description": "La orden está bloqueada en PROCESANDO o la transición no es válida"},
-        503: {"description": "No fue posible actualizar el estado de la orden"},
+        409: {"description": "Transición de estado no permitida"},
+        503: {"description": "No fue posible actualizar o marcar la orden como entregada"},
     },
 )
 def actualizar_estado_orden_interno(
     ordenId: int,
     datos: ActualizarEstadoOrdenEntrada,
+    x_service_module: str | None = Header(default=None, alias="X-Service-Module"),
     sesion: Session = Depends(get_db),
 ):
-    """HU-35: Bloquear orden al pasar a PROCESANDO (contrato interno para MOD-05 Pagos)."""
-    return servicio_orden.actualizar_estado_interno(sesion, ordenId, datos.estado)
+    """
+    COM-09 (HU-35 y HU-42):
+    - MOD-05: bloquea o resuelve orden (PENDIENTE -> PROCESANDO -> PAGADA/CANCELADA).
+    - MOD-06: marca orden como ENTREGADA con marca temporal entregadaEn (PAGADA -> ENTREGADA).
+    """
+    if x_service_module is not None and x_service_module.strip().upper() not in MODULOS_AUTORIZADOS_COM09:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "message": "Módulo interno no autorizado para actualizar el estado de la orden",
+                "data": None,
+                "success": False,
+            },
+        )
+
+    estado_norm = (datos.estado or "").strip().upper()
+    if estado_norm == ESTADO_ORDEN_ENTREGADA:
+        return servicio_orden.marcar_orden_como_entregada(
+            sesion=sesion,
+            orden_id=ordenId,
+            entregada_en=datos.entregadaEn,
+        )
+
+    return servicio_orden.actualizar_estado_interno(
+        sesion=sesion,
+        orden_id=ordenId,
+        nuevo_estado=datos,
+    )

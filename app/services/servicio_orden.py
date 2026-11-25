@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Optional
+
 from sqlalchemy.orm import Session
 
 from app.core.configuracion import settings
@@ -11,6 +14,7 @@ from app.domain.carrito import (
 )
 from app.domain.orden import (
     ESTADO_ORDEN_CANCELADA,
+    ESTADO_ORDEN_ENTREGADA,
     ESTADO_ORDEN_PENDIENTE,
     ESTADO_ORDEN_PROCESANDO,
     MENSAJE_CARRITO_VACIO_ORDEN,
@@ -36,7 +40,7 @@ from app.services.servicio_parametros import ServicioParametros
 
 
 class ServicioOrden:
-    """Capa Application / Service de MOD-04: casos de uso de Órdenes (HU-31 a HU-35)."""
+    """Capa Application / Service de MOD-04: casos de uso de Órdenes (HU-31 a HU-35 y HU-42)."""
 
     def __init__(self):
         self.repo_carrito = RepositorioCarrito()
@@ -232,20 +236,40 @@ class ServicioOrden:
             },
         )
 
-    # --- HU-35: Bloquear orden al pasar a procesando (endpoint interno MOD-05) ---
+    # --- HU-35 y HU-42: Actualizar estado interno vía COM-09 (MOD-05 y MOD-06) ---
 
     def actualizar_estado_interno(
-        self, sesion: Session, orden_id: int, nuevo_estado: str | ActualizarEstadoOrdenEntrada
+        self,
+        sesion: Session,
+        orden_id: int,
+        nuevo_estado: str | ActualizarEstadoOrdenEntrada,
+        entregada_en: Optional[datetime] = None,
     ) -> EstadoOrdenInternoSalida:
-        estado_solicitado = nuevo_estado.estado if hasattr(nuevo_estado, "estado") else nuevo_estado
-        with manejar_errores_bd("No fue posible actualizar el estado de la orden"):
+        if hasattr(nuevo_estado, "estado"):
+            estado_solicitado = nuevo_estado.estado
+            fecha_entrega = getattr(nuevo_estado, "entregadaEn", None) or entregada_en
+        else:
+            estado_solicitado = nuevo_estado
+            fecha_entrega = entregada_en
+
+        mensaje_error_bd = (
+            "No fue posible marcar la orden como entregada"
+            if (estado_solicitado or "").strip().upper() == ESTADO_ORDEN_ENTREGADA
+            else "No fue posible actualizar el estado de la orden"
+        )
+
+        with manejar_errores_bd(mensaje_error_bd):
             orden = self.repo_orden.obtener_por_id(sesion, orden_id)
 
         if orden is None:
             raise ErrorAplicacion(404, MENSAJE_ORDEN_NO_EXISTE)
 
         estado_anterior = orden.estado
-        estado_destino = validar_transicion_estado_interno(estado_anterior, estado_solicitado)
+        estado_destino = validar_transicion_estado_interno(
+            estado_anterior,
+            estado_solicitado,
+            entregada_en=fecha_entrega,
+        )
 
         if estado_destino == ESTADO_ORDEN_CANCELADA:
             try:
@@ -255,12 +279,39 @@ class ServicioOrden:
                 sesion.rollback()
                 raise ErrorAplicacion(503, MENSAJE_COM12_NO_DISPONIBLE) from error
 
-        with manejar_errores_bd("No fue posible actualizar el estado de la orden"):
-            self.repo_orden.actualizar_estado(sesion, orden, estado_destino)
+        with manejar_errores_bd(mensaje_error_bd):
+            self.repo_orden.actualizar_estado(
+                sesion,
+                orden,
+                estado_destino,
+                entregada_en=fecha_entrega,
+            )
 
         return EstadoOrdenInternoSalida(
             ordenId=orden.id,
             estadoAnterior=estado_anterior,
             estadoActual=estado_destino,
             bloqueada=(estado_destino == ESTADO_ORDEN_PROCESANDO),
+        )
+
+    def marcar_orden_como_entregada(
+        self,
+        sesion: Session,
+        orden_id: int,
+        entregada_en: Optional[datetime],
+    ) -> dict:
+        """HU-42: Cierra formalmente una orden PAGADA pasándola a ENTREGADA vía COM-09."""
+        salida = self.actualizar_estado_interno(
+            sesion=sesion,
+            orden_id=orden_id,
+            nuevo_estado=ESTADO_ORDEN_ENTREGADA,
+            entregada_en=entregada_en,
+        )
+        return respuesta(
+            "Orden cerrada como entregada",
+            {
+                "ordenId": salida.ordenId,
+                "estado": salida.estadoActual,
+                "confirmado": True,
+            },
         )

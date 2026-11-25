@@ -1,9 +1,9 @@
 from typing import Optional
+from datetime import datetime
 
 from pydantic import BaseModel
-from sqlalchemy import Column, Float, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
-
 from app.core.base_datos import Base
 from app.core.respuestas import ErrorAplicacion
 
@@ -15,12 +15,14 @@ ESTADO_ORDEN_PENDIENTE = "PENDIENTE"
 ESTADO_ORDEN_PROCESANDO = "PROCESANDO"
 ESTADO_ORDEN_PAGADA = "PAGADA"
 ESTADO_ORDEN_CANCELADA = "CANCELADA"
+ESTADO_ORDEN_ENTREGADA = "ENTREGADA"
 
 ESTADOS_ORDEN_VALIDOS = (
     ESTADO_ORDEN_PENDIENTE,
     ESTADO_ORDEN_PROCESANDO,
     ESTADO_ORDEN_PAGADA,
     ESTADO_ORDEN_CANCELADA,
+    ESTADO_ORDEN_ENTREGADA,
 )
 
 # Órdenes que cuentan para el límite de 1 licencia en preventa (RN-05)
@@ -28,16 +30,19 @@ ESTADOS_ORDEN_ACTIVAS_PREVENTA = (
     ESTADO_ORDEN_PENDIENTE,
     ESTADO_ORDEN_PROCESANDO,
     ESTADO_ORDEN_PAGADA,
+    ESTADO_ORDEN_ENTREGADA,
 )
 
 ESTADOS_DESTINO_INTERNO_PERMITIDOS = (
     ESTADO_ORDEN_PROCESANDO,
     ESTADO_ORDEN_PAGADA,
     ESTADO_ORDEN_CANCELADA,
+    ESTADO_ORDEN_ENTREGADA,
 )
 
 MENSAJE_ORDEN_NO_EXISTE = "La orden indicada no existe"
 MENSAJE_CARRITO_VACIO_ORDEN = "No es posible generar una orden con el carrito vacío"
+MENSAJE_TRANSICION_NO_PERMITIDA = "Transición de estado no permitida"
 
 
 def validar_estado_consulta_orden(estado: Optional[str]) -> Optional[str]:
@@ -58,11 +63,17 @@ def validar_cancelacion_orden(estado_actual: str) -> None:
         raise ErrorAplicacion(409, "Solo se pueden cancelar órdenes en estado PENDIENTE")
 
 
-def validar_transicion_estado_interno(estado_actual: str, nuevo_estado: str) -> str:
+def validar_transicion_estado_interno(
+    estado_actual: str,
+    nuevo_estado: str,
+    entregada_en: Optional[datetime] = None,
+) -> str:
     """
-    HU-35: valida transiciones internas invocadas por MOD-05 (Transacciones):
+    HU-35 y HU-42: valida transiciones internas invocadas por MOD-05 (Transacciones)
+    y MOD-06 (Despacho) vía COM-09:
     - PENDIENTE -> PROCESANDO (bloquea la orden durante el pago)
     - PROCESANDO -> PAGADA | CANCELADA (resuelve el pago)
+    - PAGADA -> ENTREGADA (cierra la orden tras asignar licencias, HU-42)
     """
     destino = (nuevo_estado or "").strip().upper()
     if destino not in ESTADOS_ORDEN_VALIDOS:
@@ -74,14 +85,24 @@ def validar_transicion_estado_interno(estado_actual: str, nuevo_estado: str) -> 
     transiciones_validas = {
         ESTADO_ORDEN_PENDIENTE: (ESTADO_ORDEN_PROCESANDO,),
         ESTADO_ORDEN_PROCESANDO: (ESTADO_ORDEN_PAGADA, ESTADO_ORDEN_CANCELADA),
+        ESTADO_ORDEN_PAGADA: (ESTADO_ORDEN_ENTREGADA,),
     }
 
     permitidos = transiciones_validas.get(estado_actual, ())
     if destino not in permitidos:
+        if destino == ESTADO_ORDEN_ENTREGADA or estado_actual == ESTADO_ORDEN_ENTREGADA:
+            raise ErrorAplicacion(409, MENSAJE_TRANSICION_NO_PERMITIDA)
         raise ErrorAplicacion(
             409,
             f"No es posible transicionar una orden de {estado_actual} a {destino}",
         )
+
+    if destino == ESTADO_ORDEN_ENTREGADA and entregada_en is None:
+        raise ErrorAplicacion(
+            400,
+            "La marca temporal entregadaEn es obligatoria para marcar la orden como ENTREGADA",
+        )
+
     return destino
 
 
@@ -100,6 +121,7 @@ class Orden(Base):
     subtotal_bruto = Column(Float, nullable=False, default=0.0)
     descuento_total = Column(Float, nullable=False, default=0.0)
     total = Column(Float, nullable=False, default=0.0)
+    entregada_en = Column(DateTime(timezone=True), nullable=True)
 
     items = relationship(
         "ItemOrden",
@@ -168,10 +190,19 @@ class CancelacionOrdenSalida(BaseModel):
 
 
 class ActualizarEstadoOrdenEntrada(BaseModel):
-    """Contrato interno de entrada de HU-35."""
+    """Contrato interno COM-09 de entrada (HU-35 y HU-42)."""
     estado: str
+    transaccionId: Optional[str] = None
+    entregadaEn: Optional[datetime] = None
 
-    model_config = {"json_schema_extra": {"examples": [{"estado": "PROCESANDO"}]}}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"estado": "PROCESANDO"},
+                {"estado": "ENTREGADA", "entregadaEn": "2026-10-25T10:03:05Z"},
+            ]
+        }
+    }
 
 
 class EstadoOrdenInternoSalida(BaseModel):
@@ -180,3 +211,10 @@ class EstadoOrdenInternoSalida(BaseModel):
     estadoAnterior: str
     estadoActual: str
     bloqueada: bool
+
+
+class CierreOrdenEntregadaSalida(BaseModel):
+    """Datos de salida de HU-42 al cerrar una orden como ENTREGADA."""
+    ordenId: int
+    estado: str
+    confirmado: bool

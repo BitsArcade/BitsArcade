@@ -1,9 +1,9 @@
 """
-Servicio de aplicación para MOD-06 Despacho (HU-41).
+Servicio de aplicación para MOD-06 Despacho (HU-41 y HU-42).
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from app.domain.despacho import (
 from app.domain.inventario import KeyLicencia
 from app.domain.orden import Orden
 from app.repositories.repositorio_despacho import RepositorioDespacho
+from app.services.servicio_orden import ServicioOrden
 
 
 class AdaptadorOrdenYInventarioDespacho(Protocol):
@@ -30,6 +31,34 @@ class AdaptadorOrdenYInventarioDespacho(Protocol):
         licencias en inventario (RESERVADA -> VENDIDA), retornando metadatos por ítem.
         """
         ...
+
+
+class AdaptadorOrdenesCOM09(Protocol):
+    def marcar_orden_entregada(
+        self, orden_id: int, entregada_en: datetime
+    ) -> dict[str, Any]:
+        """
+        Invoca COM-09 (PATCH /interno/v1/ordenes/{ordenId}/estado) en MOD-04
+        para transicionar la orden de PAGADA a ENTREGADA (HU-42).
+        """
+        ...
+
+
+class AdaptadorOrdenesLocalCOM09:
+    """Adaptador interno de MOD-06 hacia MOD-04 (COM-09) para HU-42."""
+
+    def __init__(self, db: Session, servicio_orden: Optional[ServicioOrden] = None):
+        self.db = db
+        self.servicio_orden = servicio_orden or ServicioOrden()
+
+    def marcar_orden_entregada(
+        self, orden_id: int, entregada_en: datetime
+    ) -> dict[str, Any]:
+        return self.servicio_orden.marcar_orden_como_entregada(
+            sesion=self.db,
+            orden_id=orden_id,
+            entregada_en=entregada_en,
+        )
 
 
 class AdaptadorOrdenYInventarioLocal:
@@ -145,9 +174,16 @@ class ServicioDespacho:
         self,
         repositorio: RepositorioDespacho,
         adaptador_inventario: AdaptadorOrdenYInventarioDespacho,
+        adaptador_ordenes: Optional[AdaptadorOrdenesCOM09] = None,
     ):
         self.repositorio = repositorio
         self.adaptador_inventario = adaptador_inventario
+        if adaptador_ordenes is not None:
+            self.adaptador_ordenes = adaptador_ordenes
+        elif hasattr(adaptador_inventario, "db"):
+            self.adaptador_ordenes = AdaptadorOrdenesLocalCOM09(adaptador_inventario.db)
+        else:
+            self.adaptador_ordenes = None
 
     @staticmethod
     def _serializar_despacho(despacho: DespachoOrden) -> dict[str, Any]:
@@ -171,12 +207,32 @@ class ServicioDespacho:
             ],
         }
 
+    def marcar_orden_como_entregada(
+        self,
+        orden_id: int,
+        entregada_en: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        """
+        HU-42 / COM-09: Notifica a MOD-04 que las licencias fueron asignadas y
+        cierra formalmente la orden en estado ENTREGADA.
+        """
+        if self.adaptador_ordenes is None:
+            raise ErrorAplicacion(
+                503, "No fue posible marcar la orden como entregada"
+            )
+        fecha_entrega = entregada_en or datetime.now(timezone.utc)
+        return self.adaptador_ordenes.marcar_orden_entregada(
+            orden_id=orden_id,
+            entregada_en=fecha_entrega,
+        )
+
     def ejecutar_despacho_com10(
         self, solicitud: SolicitudDespachoCOM10
     ) -> dict[str, Any]:
         """
-        HU-41 / COM-10: Asigna de forma idempotente e inmutable una licencia digital
-        al perfil del usuario por cada ítem de la orden pagada.
+        HU-41 / COM-10 + HU-42 / COM-09: Asigna de forma idempotente e inmutable una
+        licencia digital al perfil del usuario por cada ítem de la orden pagada y
+        cierra la orden como ENTREGADA.
         """
         existente = self.repositorio.obtener_despacho_por_orden_id(solicitud.ordenId)
         if existente is not None:
@@ -224,4 +280,12 @@ class ServicioDespacho:
             licencias=licencias,
         )
         guardado = self.repositorio.guardar_despacho_con_licencias(nuevo_despacho)
+
+        # HU-42: Tras asignar las licencias de la orden pagada, cerrarla como ENTREGADA vía COM-09
+        if self.adaptador_ordenes is not None:
+            self.marcar_orden_como_entregada(
+                orden_id=solicitud.ordenId,
+                entregada_en=ahora,
+            )
+
         return self._serializar_despacho(guardado)
