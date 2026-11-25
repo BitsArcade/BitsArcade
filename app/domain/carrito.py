@@ -1,0 +1,167 @@
+from typing import Optional
+
+from pydantic import BaseModel
+from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
+
+from app.core.base_datos import Base
+from app.core.respuestas import ErrorAplicacion
+
+# =====================================================================
+# 1. CONSTANTES Y REGLAS DE DOMINIO (MOD-04: Carrito de Compras)
+# =====================================================================
+
+ESTADO_CARRITO_ACTIVO = "ACTIVO"
+
+ESTADO_JUEGO_PREVENTA = "PREVENTA"
+ESTADO_JUEGO_INACTIVO = "INACTIVO"
+
+MAXIMO_LICENCIAS_PREVENTA = 1
+
+MENSAJE_JUEGO_NO_EXISTE = "El juego indicado no existe"
+MENSAJE_STOCK_INSUFICIENTE = "Stock insuficiente para la cantidad solicitada"
+MENSAJE_LIMITE_PREVENTA = "Solo se permite adquirir una licencia por título en preventa"
+MENSAJE_ITEM_NO_EXISTE = "El ítem no existe en tu carrito"
+
+
+def validar_cantidad_agregar(cantidad: int) -> None:
+    """HU-26: cantidad >= 1."""
+    if cantidad is None or cantidad < 1:
+        raise ErrorAplicacion(400, "cantidad debe ser mayor o igual a 1")
+
+
+def validar_juego_vendible(contrato_juego: dict) -> None:
+    """HU-26: el juego debe existir (COM-11) y no estar INACTIVO."""
+    if not contrato_juego.get("exists") or contrato_juego.get("status") == ESTADO_JUEGO_INACTIVO:
+        raise ErrorAplicacion(404, MENSAJE_JUEGO_NO_EXISTE)
+
+
+def validar_limite_preventa(estado_juego: str, cantidad_en_carrito: int, licencias_en_ordenes: int) -> None:
+    """
+    RN-05: en PREVENTA el máximo es 1 licencia por usuario, considerando el carrito y las
+    órdenes previas no canceladas del usuario.
+    """
+    if estado_juego == ESTADO_JUEGO_PREVENTA and cantidad_en_carrito + licencias_en_ordenes > MAXIMO_LICENCIAS_PREVENTA:
+        raise ErrorAplicacion(409, MENSAJE_LIMITE_PREVENTA)
+
+
+def validar_stock_suficiente(cantidad_solicitada: int, disponibles: int) -> None:
+    """HU-26 / HU-29: la cantidad total del ítem no puede superar las keys disponibles (COM-12)."""
+    if cantidad_solicitada > disponibles:
+        raise ErrorAplicacion(409, MENSAJE_STOCK_INSUFICIENTE)
+
+
+# ---------------------------------------------------------------------
+# HU-29: Descuento progresivo por volumen (RN-08). Configuración estática de Carrito.Domain.
+# ---------------------------------------------------------------------
+
+ESTADO_JUEGO_ESTRENO = "ESTRENO"
+UMBRAL_DESCUENTO_VOLUMEN = 3          # cantidad mínima para aplicar RN-08
+PORCENTAJE_DESCUENTO_VOLUMEN = 0.10   # 10 % por unidad
+# RN-07: no se aplican descuentos a juegos en PREVENTA o ESTRENO (no existen cupones en el alcance).
+ESTADOS_SIN_DESCUENTO = (ESTADO_JUEGO_PREVENTA, ESTADO_JUEGO_ESTRENO)
+
+
+def validar_cantidad_actualizar(cantidad: int) -> None:
+    """HU-29: cantidad >= 1; para retirar el ítem se usa DELETE (HU-28)."""
+    if cantidad is None or cantidad < 1:
+        raise ErrorAplicacion(400, "cantidad debe ser mayor o igual a 1. Use DELETE para retirar el ítem")
+
+
+def calcular_desglose(precio_unitario: float, precio_piso: float, cantidad: int, estado_juego: str) -> dict:
+    """
+    HU-29: desglose monetario de un ítem.
+    - RN-07: PREVENTA / ESTRENO sin descuentos.
+    - RN-08: si el juego está ACTIVO y cantidad >= umbral, descuento del 10 % por unidad.
+    - RN-02: ningún precio unitario con descuento puede ser menor que floorPrice.
+    """
+    descuento_unitario = 0.0
+    if estado_juego not in ESTADOS_SIN_DESCUENTO and cantidad >= UMBRAL_DESCUENTO_VOLUMEN:
+        descuento_unitario = precio_unitario * PORCENTAJE_DESCUENTO_VOLUMEN
+        descuento_unitario = min(descuento_unitario, max(precio_unitario - precio_piso, 0.0))
+    descuento_total = round(descuento_unitario * cantidad, 2)
+    return {
+        "precioUnitario": round(precio_unitario, 2),
+        "descuentoVolumen": descuento_total,
+        "subtotal": round(precio_unitario * cantidad - descuento_total, 2),
+    }
+
+
+# =====================================================================
+# 2. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
+# =====================================================================
+
+class Carrito(Base):
+    """Carrito temporal de compras de un cliente (uno ACTIVO por usuario)."""
+    __tablename__ = "carritos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, nullable=False, index=True)
+    estado = Column(String(20), nullable=False, default=ESTADO_CARRITO_ACTIVO)
+
+    items = relationship(
+        "ItemCarrito",
+        back_populates="carrito",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="ItemCarrito.id",
+    )
+
+
+class ItemCarrito(Base):
+    """
+    Ítem del carrito. No almacena el precio: los precios vigentes se obtienen siempre del
+    Catálogo vía COM-11 (MOD-04 no recalcula RN-01).
+    """
+    __tablename__ = "carrito_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    carrito_id = Column(Integer, ForeignKey("carritos.id"), nullable=False, index=True)
+    juego_id = Column(Integer, nullable=False, index=True)
+    cantidad = Column(Integer, nullable=False, default=1)
+
+    carrito = relationship("Carrito", back_populates="items")
+
+
+# =====================================================================
+# 3. ESQUEMAS DE ENTRADA / SALIDA (Pydantic DTOs)
+# =====================================================================
+
+class AgregarItemEntrada(BaseModel):
+    """Contrato de entrada de HU-26."""
+    gameId: int
+    cantidad: int = 1
+
+    model_config = {"json_schema_extra": {"examples": [{"gameId": 101, "cantidad": 1}]}}
+
+
+class ItemCarritoSalida(BaseModel):
+    itemId: int
+    gameId: int
+    titulo: Optional[str] = None
+    cantidad: int
+    precioUnitario: float
+
+
+class CarritoSalida(BaseModel):
+    carritoId: int
+    items: list[ItemCarritoSalida]
+    subtotal: float
+    moneda: str
+
+
+class ActualizarCantidadEntrada(BaseModel):
+    """Contrato de entrada de HU-29."""
+    cantidad: int
+
+    model_config = {"json_schema_extra": {"examples": [{"cantidad": 3}]}}
+
+
+class DesgloseItemSalida(BaseModel):
+    itemId: int
+    gameId: int
+    cantidad: int
+    precioUnitario: float
+    descuentoVolumen: float
+    subtotal: float
+    moneda: str
