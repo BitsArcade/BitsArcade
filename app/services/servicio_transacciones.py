@@ -116,11 +116,6 @@ class AdaptadorOrdenesLocal:
     async def notificar_resultado_com09(
         self, orden_id: int, nuevo_estado: str, transaccion_id: str
     ) -> bool:
-        """
-        HU-40 / COM-09: Actualiza la orden a PAGADA o CANCELADA de forma idempotente,
-        delegando a ServicioOrden.actualizar_estado_interno cuando está disponible
-        para liberar claves reservadas en inventario al cancelar.
-        """
         mensaje_bd = (
             "No fue posible procesar el rechazo del pago"
             if nuevo_estado == "CANCELADA"
@@ -137,7 +132,6 @@ class AdaptadorOrdenesLocal:
             if not debe_transicionar:
                 return True
 
-            # Delegar a MOD-04 (ServicioOrden.actualizar_estado_interno) si está disponible
             try:
                 from app.services.servicio_orden import ServicioOrden
 
@@ -174,13 +168,36 @@ class ClientePasarelaSimulada:
 
 
 class AdaptadorDespachoLocal:
-    """Adaptador COM-10 hacia MOD-06 Despacho."""
+    """Adaptador COM-10 hacia MOD-06 Despacho (HU-41)."""
+
+    def __init__(self, db: Optional[Session] = None):
+        self.db = db
 
     async def activar_despacho_com10(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "ordenId": payload["ordenId"],
-            "estadoDespacho": "ACTIVADO",
-        }
+        if self.db is None or not payload.get("items"):
+            return {
+                "ordenId": payload["ordenId"],
+                "estadoDespacho": "ACTIVADO",
+            }
+
+        from app.domain.despacho import SolicitudDespachoCOM10
+        from app.repositories.repositorio_despacho import RepositorioDespacho
+        from app.services.servicio_despacho import (
+            AdaptadorOrdenYInventarioLocal,
+            ServicioDespacho,
+        )
+
+        solicitud = SolicitudDespachoCOM10(**payload)
+        servicio_despacho = ServicioDespacho(
+            repositorio=RepositorioDespacho(self.db),
+            adaptador_inventario=AdaptadorOrdenYInventarioLocal(self.db),
+        )
+        try:
+            return servicio_despacho.ejecutar_despacho_com10(solicitud)
+        except ErrorAplicacion as error:
+            if error.status_code == 409:
+                raise ErrorReservaExpiradaDespacho(error.message) from error
+            raise
 
 
 class ServicioTransacciones:
@@ -224,27 +241,22 @@ class ServicioTransacciones:
         metodo_pago_id: int,
         usuario_id: int,
     ) -> Transaccion:
-        # 1. Idempotencia: si ya existe transacción para este ordenId, validar dueño y retornar
         existente = self.repositorio.obtener_por_orden_id(orden_id)
         if existente is not None:
             if existente.usuario_id != usuario_id:
                 raise ErrorAplicacion(404, "La orden indicada no existe")
             return existente
 
-        # 2. Obtener datos congelados de la orden vía COM-08
         orden = await self.adaptador_ordenes.obtener_orden_com08(orden_id)
         if orden is None:
             raise ErrorAplicacion(404, "La orden indicada no existe")
 
-        # 3. Validar dueño, estado PENDIENTE y vigencia >= 2 minutos
         ReglasTransaccion.validar_orden_cobrable(orden, usuario_id)
 
-        # 4. Cambiar estado de la orden a PROCESANDO vía COM-09 (HU-35)
         actualizada = await self.adaptador_ordenes.marcar_orden_procesando_com09(orden_id)
         if not actualizada:
             raise ErrorAplicacion(409, "La orden no está disponible para pago")
 
-        # 5. Construir payload con tasa congelada (RN-09) y enviar con Idempotency-Key = ordenId
         transaccion_id = f"TX-{uuid.uuid4().hex[:8].upper()}"
         payload = ReglasTransaccion.construir_payload_pasarela(
             transaccion_id=transaccion_id,
@@ -264,7 +276,6 @@ class ServicioTransacciones:
         except Exception as error:
             raise ErrorAplicacion(503, "No fue posible iniciar el pago") from error
 
-        # 6. Registrar transacción EN_PROCESO
         nueva_transaccion = Transaccion(
             transaccion_id=transaccion_id,
             orden_id=orden.orden_id,
@@ -312,14 +323,12 @@ class ServicioTransacciones:
         firma_hmac: Optional[str],
         notificacion: SolicitudNotificacionPasarela,
     ) -> dict[str, str]:
-        # 1. Validar firma HMAC en X-Signature (401 si es inválida o ausente)
         ReglasTransaccion.verificar_firma_hmac(
             cuerpo_crudo=cuerpo_crudo,
             firma_recibida=firma_hmac,
             secreto=self.secreto_webhook,
         )
 
-        # 2. Consultar transacción (404 si transaccionId es desconocido)
         transaccion = self.repositorio.obtener_por_transaccion_id(
             notificacion.transaccionId,
             mensaje_error_bd="No fue posible procesar la aprobación del pago",
@@ -327,7 +336,6 @@ class ServicioTransacciones:
         if transaccion is None:
             raise ErrorAplicacion(404, "La transacción indicada no existe")
 
-        # 3. Idempotencia: si ya está APROBADA, retornar resultado consistente sin duplicar
         if transaccion.estado == EstadoTransaccion.APROBADA:
             return {
                 "transaccionId": transaccion.transaccion_id,
@@ -336,14 +344,12 @@ class ServicioTransacciones:
                 "estadoDespacho": "ACTIVADO",
             }
 
-        # 4. Validar estado previo y coincidencia de monto y moneda (409)
         ReglasTransaccion.validar_aprobacion_pasarela(
             transaccion=transaccion,
             monto_notificado=notificacion.monto,
             moneda_notificada=notificacion.moneda,
         )
 
-        # 5. Actualizar transacción a APROBADA
         transaccion_aprobada = self.repositorio.actualizar_estado(
             transaccion_id=transaccion.transaccion_id,
             nuevo_estado=EstadoTransaccion.APROBADA,
@@ -351,7 +357,6 @@ class ServicioTransacciones:
             mensaje_error_bd="No fue posible procesar la aprobación del pago",
         )
 
-        # 6. Generar comprobante digital inmutable (HU-39, único por transacción)
         comprobante = Comprobante(
             comprobante_id=f"CMP-{uuid.uuid4().hex[:8].upper()}",
             transaccion_id=transaccion_aprobada.transaccion_id,
@@ -368,14 +373,12 @@ class ServicioTransacciones:
             mensaje_error_bd="No fue posible procesar la aprobación del pago",
         )
 
-        # 7. Delegar a HU-40 actualización de la orden a PAGADA (COM-09)
         await self.adaptador_ordenes.notificar_resultado_com09(
             orden_id=transaccion_aprobada.orden_id,
             nuevo_estado="PAGADA",
             transaccion_id=transaccion_aprobada.transaccion_id,
         )
 
-        # 8. Activar despacho con COM-10 (si la reserva expiró, marcar REQUIERE_REVISION - P-02)
         orden = await self.adaptador_ordenes.obtener_orden_com08(transaccion_aprobada.orden_id)
         items_orden = orden.items if orden is not None else []
         orden_para_com10 = OrdenParaCobro(
@@ -421,19 +424,16 @@ class ServicioTransacciones:
         firma_hmac: Optional[str],
         notificacion: SolicitudNotificacionPasarela,
     ) -> tuple[str, dict[str, str]]:
-        # 1. Validar firma HMAC en X-Signature (401 si es inválida o ausente)
         ReglasTransaccion.verificar_firma_hmac(
             cuerpo_crudo=cuerpo_crudo,
             firma_recibida=firma_hmac,
             secreto=self.secreto_webhook,
         )
 
-        # 2. Mapear estado no exitoso (RECHAZADO/FALLIDO -> FALLIDA, EXPIRADO -> EXPIRADA)
         estado_destino, mensaje_respuesta, mensaje_usuario = (
             ReglasTransaccion.mapear_rechazo_pasarela(notificacion.estado)
         )
 
-        # 3. Consultar transacción (404 si transaccionId es desconocido)
         transaccion = self.repositorio.obtener_por_transaccion_id(
             notificacion.transaccionId,
             mensaje_error_bd="No fue posible procesar el rechazo del pago",
@@ -441,7 +441,6 @@ class ServicioTransacciones:
         if transaccion is None:
             raise ErrorAplicacion(404, "La transacción indicada no existe")
 
-        # 4. Idempotencia si ya fue resuelta con el mismo estado terminal
         if transaccion.estado == estado_destino:
             return mensaje_respuesta, {
                 "transaccionId": transaccion.transaccion_id,
@@ -450,11 +449,9 @@ class ServicioTransacciones:
                 "mensajeUsuario": transaccion.mensaje_usuario or mensaje_usuario,
             }
 
-        # 5. Si ya fue resuelta con otro estado (ej. APROBADA), lanzar 409
         if transaccion.estado != EstadoTransaccion.EN_PROCESO:
             raise ErrorAplicacion(409, "La transacción ya fue resuelta con otro estado")
 
-        # 6. Registrar transacción FALLIDA o EXPIRADA
         transaccion_actualizada = self.repositorio.actualizar_estado(
             transaccion_id=transaccion.transaccion_id,
             nuevo_estado=estado_destino,
@@ -463,7 +460,6 @@ class ServicioTransacciones:
             mensaje_error_bd="No fue posible procesar el rechazo del pago",
         )
 
-        # 7. Delegar a HU-40 la cancelación de la orden (COM-09 CANCELADA; MOD-04 libera claves)
         await self.adaptador_ordenes.notificar_resultado_com09(
             orden_id=transaccion_actualizada.orden_id,
             nuevo_estado="CANCELADA",
@@ -501,7 +497,6 @@ class ServicioTransacciones:
         transaccion_id: str,
         usuario_id: int,
     ) -> dict[str, Any]:
-        """HU-39: Consulta el comprobante digital inmutable asociado a una transacción aprobada."""
         transaccion = self.repositorio.obtener_por_transaccion_id(
             transaccion_id,
             mensaje_error_bd="No fue posible consultar el comprobante",
@@ -525,7 +520,6 @@ class ServicioTransacciones:
         comprobante_id: str,
         usuario_id: int,
     ) -> dict[str, Any]:
-        """HU-39: Consulta un comprobante digital directamente por su comprobanteId."""
         comprobante = self.repositorio.obtener_comprobante_por_id(
             comprobante_id,
             mensaje_error_bd="No fue posible consultar el comprobante",
@@ -540,10 +534,6 @@ class ServicioTransacciones:
         transaccion_id: str,
         usuario_id: int,
     ) -> dict[str, Any]:
-        """
-        HU-40: Sincroniza de forma idempotente el estado final de la orden (PAGADA o CANCELADA)
-        vía COM-09 según el resultado terminal registrado en la transacción.
-        """
         transaccion = self.repositorio.obtener_por_transaccion_id(
             transaccion_id,
             mensaje_error_bd="No fue posible actualizar el estado final de la orden",

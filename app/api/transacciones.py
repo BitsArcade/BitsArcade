@@ -44,7 +44,7 @@ def obtener_servicio_transacciones(
     repositorio = RepositorioTransacciones(db)
     adaptador_ordenes = AdaptadorOrdenesLocal(db)
     cliente_pasarela = ClientePasarelaSimulada()
-    adaptador_despacho = AdaptadorDespachoLocal()
+    adaptador_despacho = AdaptadorDespachoLocal(db)
     return ServicioTransacciones(
         repositorio=repositorio,
         adaptador_ordenes=adaptador_ordenes,
@@ -108,7 +108,6 @@ async def notificacion_pasarela(
 ):
     cuerpo_crudo = await request.body()
 
-    # Validamos firma HMAC antes de confiar en el cuerpo del webhook (401 prioritario)
     ReglasTransaccion.verificar_firma_hmac(
         cuerpo_crudo=cuerpo_crudo,
         firma_recibida=x_signature,
