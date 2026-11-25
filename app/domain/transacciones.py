@@ -1,6 +1,8 @@
 """
-Dominio, modelos ORM, esquemas Pydantic y reglas de negocio de MOD-05 Transacciones.
+Dominio, modelos ORM, esquemas Pydantic y reglas de negocio de MOD-05 Transacciones (HU-36 a HU-40).
 """
+import hashlib
+import hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -22,7 +24,7 @@ class EstadoTransaccion(str, Enum):
 
 
 # ==============================================================================
-# MODELO ORM (Base de Datos)
+# MODELOS ORM (Base de Datos)
 # ==============================================================================
 class TransaccionORM(Base):
     __tablename__ = "transacciones"
@@ -44,6 +46,21 @@ class TransaccionORM(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class ComprobanteORM(Base):
+    __tablename__ = "comprobantes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    comprobante_id = Column(String(32), unique=True, nullable=False, index=True)
+    transaccion_id = Column(String(32), unique=True, nullable=False, index=True)
+    orden_id = Column(Integer, nullable=False, index=True)
+    usuario_id = Column(Integer, nullable=False, index=True)
+    fecha = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    monto = Column(Float, nullable=False)
+    moneda = Column(String(3), nullable=False)
+    tasa_cambio = Column(Float, nullable=False)
+    referencia_pasarela = Column(String(64), nullable=True)
 
 
 # ==============================================================================
@@ -75,6 +92,19 @@ class Transaccion:
     mensaje_usuario: Optional[str] = None
     creado_en: Optional[datetime] = None
     actualizado_en: Optional[datetime] = None
+
+
+@dataclass
+class Comprobante:
+    comprobante_id: str
+    transaccion_id: str
+    orden_id: int
+    usuario_id: int
+    fecha: datetime
+    monto: float
+    moneda: str
+    tasa_cambio: float
+    referencia_pasarela: Optional[str] = None
 
 
 class ReglasTransaccion:
@@ -122,6 +152,75 @@ class ReglasTransaccion:
             "tasaCambio": orden.tasa_cambio,
         }
 
+    @staticmethod
+    def calcular_firma_hmac(cuerpo_crudo: bytes, secreto: str) -> str:
+        return hmac.new(
+            secreto.encode("utf-8"),
+            cuerpo_crudo,
+            hashlib.sha256,
+        ).hexdigest()
+
+    @classmethod
+    def verificar_firma_hmac(
+        cls,
+        cuerpo_crudo: bytes,
+        firma_recibida: Optional[str],
+        secreto: str,
+    ) -> None:
+        if not firma_recibida or not firma_recibida.strip():
+            raise ErrorAplicacion(401, "Firma de la notificación de la pasarela inválida")
+
+        firma_limpia = firma_recibida.strip()
+        if firma_limpia.lower().startswith("sha256="):
+            firma_limpia = firma_limpia.split("=", 1)[1]
+
+        esperada = cls.calcular_firma_hmac(cuerpo_crudo, secreto)
+        if not hmac.compare_digest(esperada, firma_limpia):
+            raise ErrorAplicacion(401, "Firma de la notificación de la pasarela inválida")
+
+    @staticmethod
+    def validar_aprobacion_pasarela(
+        transaccion: Transaccion,
+        monto_notificado: Optional[float],
+        moneda_notificada: Optional[str],
+    ) -> None:
+        if transaccion.estado in (EstadoTransaccion.FALLIDA, EstadoTransaccion.EXPIRADA):
+            raise ErrorAplicacion(409, "La transacción ya fue resuelta con otro estado")
+
+        if monto_notificado is None or not moneda_notificada:
+            raise ErrorAplicacion(409, "El monto o la moneda no coinciden con la orden")
+
+        if (
+            round(float(transaccion.monto), 2) != round(float(monto_notificado), 2)
+            or transaccion.moneda.upper() != moneda_notificada.strip().upper()
+        ):
+            raise ErrorAplicacion(409, "El monto o la moneda no coinciden con la orden")
+
+    @staticmethod
+    def construir_payload_com10(
+        transaccion: Transaccion,
+        orden: OrdenParaCobro,
+    ) -> dict[str, Any]:
+        """Contrato COM-10 ampliado hacia MOD-06 Despacho."""
+        items_com10 = [
+            {
+                "juegoId": item.get("juegoId"),
+                "titulo": item.get("titulo", f"Juego #{item.get('juegoId')}"),
+                "reservaId": item.get("reservaId"),
+                "precioUnitario": float(item.get("precioUnitario", 0.0)),
+            }
+            for item in orden.items
+        ]
+        return {
+            "ordenId": transaccion.orden_id,
+            "usuarioId": transaccion.usuario_id,
+            "transaccionId": transaccion.transaccion_id,
+            "moneda": transaccion.moneda,
+            "tasaCambio": transaccion.tasa_cambio,
+            "total": transaccion.monto,
+            "items": items_com10,
+        }
+
 
 # ==============================================================================
 # ESQUEMAS PYDANTIC (Contratos API español camelCase)
@@ -140,4 +239,27 @@ class DatosPagoEnProceso(BaseModel):
 class RespuestaIniciarPago(BaseModel):
     message: str
     data: Optional[DatosPagoEnProceso] = None
+    success: bool
+
+
+class SolicitudNotificacionPasarela(BaseModel):
+    transaccionId: str = Field(..., min_length=1)
+    ordenId: int = Field(..., gt=0)
+    estado: str = Field(..., min_length=1)
+    referenciaPasarela: Optional[str] = None
+    monto: Optional[float] = None
+    moneda: Optional[str] = None
+    motivo: Optional[str] = None
+
+
+class DatosPagoAprobado(BaseModel):
+    transaccionId: str
+    estado: str
+    estadoOrden: str
+    estadoDespacho: str
+
+
+class RespuestaPagoAprobado(BaseModel):
+    message: str
+    data: Optional[DatosPagoAprobado] = None
     success: bool
