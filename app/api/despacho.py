@@ -111,6 +111,51 @@ def despachar_orden_com10(
 
 
 @enrutador_biblioteca.get(
+    "",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaBibliotecaLicencias,
+    summary="Consultar biblioteca digital del usuario autenticado (HU-46)",
+    description=(
+        "Despliega la biblioteca digital del usuario autenticado con sus licencias "
+        "enmascaradas por seguridad y filtros opcionales por título y plataforma."
+    ),
+    responses={
+        401: {"description": "Token inválido, expirado o ausente"},
+        503: {"description": "No fue posible consultar la biblioteca de licencias"},
+    },
+)
+def consultar_biblioteca_usuario(
+    titulo: Optional[str] = Query(default=None),
+    plataforma: Optional[str] = Query(default=None),
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    licencias = servicio.listar_biblioteca_usuario(
+        usuario_id=usuario.id,
+        titulo=titulo,
+        plataforma=plataforma,
+    )
+    datos = [LicenciaBibliotecaSalida(**item).model_dump() for item in licencias]
+    if not datos:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "message": "El usuario aún no tiene licencias digitales en su biblioteca",
+                "data": [],
+                "success": False,
+            },
+        )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Biblioteca de licencias obtenida exitosamente",
+            "data": datos,
+            "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.get(
     "/licencias",
     status_code=status.HTTP_200_OK,
     response_model=RespuestaBibliotecaLicencias,

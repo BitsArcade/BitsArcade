@@ -163,6 +163,31 @@ class ReglasDespacho:
         return licencia
 
     @staticmethod
+    def filtrar_biblioteca_usuario(
+        licencias: list[LicenciaUsuario],
+        usuario_id: int,
+        titulo: Optional[str] = None,
+        plataforma: Optional[str] = None,
+    ) -> list[LicenciaUsuario]:
+        """
+        HU-46: Garantiza aislamiento por usuario autenticado y aplica filtros
+        opcionales por título y plataforma sin exponer la clave en texto plano.
+        """
+        termino_titulo = (titulo or "").strip().lower()
+        termino_plataforma = (plataforma or "").strip().lower()
+
+        resultado: list[LicenciaUsuario] = []
+        for lic in licencias:
+            if lic.usuario_id != usuario_id:
+                continue
+            if termino_titulo and termino_titulo not in lic.titulo_juego.lower():
+                continue
+            if termino_plataforma and termino_plataforma != lic.plataforma.strip().lower():
+                continue
+            resultado.append(lic)
+        return resultado
+
+    @staticmethod
     def validar_elegibilidad_entrega(
         orden_id: int,
         reserva_ids: list[str],
@@ -275,7 +300,7 @@ class RespuestaRevelarClave(BaseModel):
 
 
 class LicenciaBibliotecaSalida(BaseModel):
-    """Contrato de salida para cada licencia en la biblioteca del usuario."""
+    """Contrato de salida para cada licencia en la biblioteca del usuario (HU-46)."""
 
     licenciaId: str
     ordenId: int

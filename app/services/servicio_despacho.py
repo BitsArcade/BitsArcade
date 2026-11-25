@@ -388,12 +388,20 @@ class ServicioDespacho:
     def listar_biblioteca_usuario(
         self,
         usuario_id: int,
+        titulo: Optional[str] = None,
+        plataforma: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """
-        Despliega la biblioteca digital del usuario autenticado con sus
-        licencias enmascaradas por seguridad.
+        HU-46: Despliega la biblioteca digital del usuario autenticado con sus
+        licencias enmascaradas por seguridad y filtros opcionales por título/plataforma.
         """
-        licencias = self.repositorio.listar_licencias_por_usuario(usuario_id)
+        licencias_bd = self.repositorio.listar_licencias_por_usuario(usuario_id)
+        licencias = ReglasDespacho.filtrar_biblioteca_usuario(
+            licencias=licencias_bd,
+            usuario_id=usuario_id,
+            titulo=titulo,
+            plataforma=plataforma,
+        )
         return [
             {
                 "licenciaId": lic.licencia_id,
