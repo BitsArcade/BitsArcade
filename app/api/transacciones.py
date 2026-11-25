@@ -1,5 +1,5 @@
 """
-Endpoints de MOD-05 Transacciones (HU-36, HU-37, HU-38 y HU-39).
+Endpoints de MOD-05 Transacciones (HU-36, HU-37, HU-38, HU-39 y HU-40).
 """
 import json
 from typing import Optional, Union
@@ -16,12 +16,14 @@ from app.domain.transacciones import (
     DatosComprobante,
     DatosEstadoPago,
     DatosPagoEnProceso,
+    DatosSincronizacionOrden,
     ReglasTransaccion,
     RespuestaComprobante,
     RespuestaEstadoPago,
     RespuestaIniciarPago,
     RespuestaPagoAprobado,
     RespuestaPagoRechazado,
+    RespuestaSincronizacionOrden,
     SolicitudIniciarPago,
     SolicitudNotificacionPasarela,
 )
@@ -218,6 +220,36 @@ def consultar_comprobante_por_transaccion(
         status_code=status.HTTP_200_OK,
         content={
             "message": "Consulta de comprobante exitosa",
+            "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_transacciones.post(
+    "/{transaccionId}/sincronizar-orden",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaSincronizacionOrden,
+    summary="Actualizar estado final de la orden tras resultado de pago (HU-40)",
+    description=(
+        "Sincroniza de forma idempotente el estado final de la orden (PAGADA o CANCELADA) "
+        "hacia MOD-04 mediante el contrato COM-09 según el resultado terminal del pago."
+    ),
+)
+async def sincronizar_estado_final_orden(
+    transaccionId: str,
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioTransacciones = Depends(obtener_servicio_transacciones),
+):
+    resultado = await servicio.sincronizar_estado_final_orden(
+        transaccion_id=transaccionId,
+        usuario_id=usuario.id,
+    )
+    datos = DatosSincronizacionOrden(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Estado final de la orden actualizado",
             "data": datos.model_dump(),
             "success": True,
         },

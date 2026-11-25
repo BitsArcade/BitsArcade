@@ -140,6 +140,21 @@ class ReglasTransaccion:
         EstadoTransaccion.REQUIERE_REVISION: "El pago fue aprobado pero la reserva expiró; requiere revisión.",
     }
 
+    MAPEO_ESTADO_FINAL_ORDEN: dict[EstadoTransaccion, str] = {
+        EstadoTransaccion.APROBADA: "PAGADA",
+        EstadoTransaccion.REQUIERE_REVISION: "PAGADA",
+        EstadoTransaccion.FALLIDA: "CANCELADA",
+        EstadoTransaccion.EXPIRADA: "CANCELADA",
+    }
+
+    TRANSICIONES_ORDEN_PERMITIDAS: dict[str, set[str]] = {
+        "PENDIENTE": {"PROCESANDO", "CANCELADA"},
+        "PROCESANDO": {"PAGADA", "CANCELADA"},
+        "PAGADA": {"ENTREGADA"},
+        "CANCELADA": set(),
+        "ENTREGADA": set(),
+    }
+
     @classmethod
     def validar_orden_cobrable(
         cls,
@@ -245,6 +260,30 @@ class ReglasTransaccion:
         if clave not in cls.MAPEO_ESTADOS_NO_EXITOSOS:
             raise ErrorAplicacion(400, "Estado de notificación de pasarela no soportado")
         return cls.MAPEO_ESTADOS_NO_EXITOSOS[clave]
+
+    @classmethod
+    def mapear_estado_final_orden(cls, estado_transaccion: EstadoTransaccion) -> str:
+        """HU-40: Determina el estado final de orden (PAGADA o CANCELADA) según el pago."""
+        if estado_transaccion not in cls.MAPEO_ESTADO_FINAL_ORDEN:
+            raise ErrorAplicacion(
+                409, "La transacción aún se encuentra en proceso y no tiene estado final"
+            )
+        return cls.MAPEO_ESTADO_FINAL_ORDEN[estado_transaccion]
+
+    @classmethod
+    def validar_transicion_orden_com09(cls, estado_actual: str, nuevo_estado: str) -> bool:
+        """
+        HU-40 / COM-09: Retorna False si ya está en el estado destino (idempotente),
+        True si la transición es válida, o lanza 409 si viola irreversibilidad.
+        """
+        actual = estado_actual.strip().upper()
+        destino = nuevo_estado.strip().upper()
+        if actual == destino:
+            return False
+        permitidos = cls.TRANSICIONES_ORDEN_PERMITIDAS.get(actual, set())
+        if destino not in permitidos:
+            raise ErrorAplicacion(409, "Transición de estado no permitida")
+        return True
 
     @classmethod
     def obtener_mensaje_usuario(cls, transaccion: Transaccion) -> str:
@@ -364,4 +403,18 @@ class DatosComprobante(BaseModel):
 class RespuestaComprobante(BaseModel):
     message: str
     data: Optional[DatosComprobante] = None
+    success: bool
+
+
+class DatosSincronizacionOrden(BaseModel):
+    transaccionId: str
+    ordenId: int
+    estadoTransaccion: str
+    estadoOrden: str
+    sincronizado: bool
+
+
+class RespuestaSincronizacionOrden(BaseModel):
+    message: str
+    data: Optional[DatosSincronizacionOrden] = None
     success: bool

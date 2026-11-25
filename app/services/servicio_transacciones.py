@@ -1,8 +1,9 @@
 """
-Servicio de aplicación para MOD-05 Transacciones (HU-36, HU-37, HU-38 y HU-39).
+Servicio de aplicación para MOD-05 Transacciones (HU-36, HU-37, HU-38, HU-39 y HU-40).
 """
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Optional, Protocol
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -55,7 +56,7 @@ class AdaptadorDespachoCOM10(Protocol):
 
 
 class AdaptadorOrdenesLocal:
-    """Implementación sobre el almacenamiento local de MOD-04 (COM-08 / COM-09)."""
+    """Implementación sobre MOD-04 (COM-08 / COM-09 / HU-40)."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -115,6 +116,11 @@ class AdaptadorOrdenesLocal:
     async def notificar_resultado_com09(
         self, orden_id: int, nuevo_estado: str, transaccion_id: str
     ) -> bool:
+        """
+        HU-40 / COM-09: Actualiza la orden a PAGADA o CANCELADA de forma idempotente,
+        delegando a ServicioOrden.actualizar_estado_interno cuando está disponible
+        para liberar claves reservadas en inventario al cancelar.
+        """
         mensaje_bd = (
             "No fue posible procesar el rechazo del pago"
             if nuevo_estado == "CANCELADA"
@@ -124,14 +130,28 @@ class AdaptadorOrdenesLocal:
             orden = self.db.query(Orden).filter(Orden.id == orden_id).first()
             if orden is None:
                 return False
-            if orden.estado == nuevo_estado:
+
+            debe_transicionar = ReglasTransaccion.validar_transicion_orden_com09(
+                orden.estado, nuevo_estado
+            )
+            if not debe_transicionar:
                 return True
-            # CANCELADA es irreversible; PAGADA/ENTREGADA no pueden cancelarse desde pasarela
-            if orden.estado == "CANCELADA" or orden.estado in ("PAGADA", "ENTREGADA"):
-                raise ErrorAplicacion(409, "Transición de estado no permitida")
-            orden.estado = nuevo_estado
-            self.db.commit()
-            return True
+
+            # Delegar a MOD-04 (ServicioOrden.actualizar_estado_interno) si está disponible
+            try:
+                from app.services.servicio_orden import ServicioOrden
+
+                entrada = SimpleNamespace(
+                    estado=nuevo_estado,
+                    nuevoEstado=nuevo_estado,
+                    transaccionId=transaccion_id,
+                )
+                ServicioOrden.actualizar_estado_interno(self.db, orden_id, entrada)
+                return True
+            except (ImportError, TypeError, AttributeError):
+                orden.estado = nuevo_estado
+                self.db.commit()
+                return True
         except ErrorAplicacion:
             raise
         except SQLAlchemyError as error:
@@ -514,3 +534,37 @@ class ServicioTransacciones:
             raise ErrorAplicacion(404, "El comprobante indicado no existe")
 
         return self._serializar_comprobante(comprobante)
+
+    async def sincronizar_estado_final_orden(
+        self,
+        transaccion_id: str,
+        usuario_id: int,
+    ) -> dict[str, Any]:
+        """
+        HU-40: Sincroniza de forma idempotente el estado final de la orden (PAGADA o CANCELADA)
+        vía COM-09 según el resultado terminal registrado en la transacción.
+        """
+        transaccion = self.repositorio.obtener_por_transaccion_id(
+            transaccion_id,
+            mensaje_error_bd="No fue posible actualizar el estado final de la orden",
+        )
+        if transaccion is None or transaccion.usuario_id != usuario_id:
+            raise ErrorAplicacion(404, "La transacción indicada no existe")
+
+        estado_orden_destino = ReglasTransaccion.mapear_estado_final_orden(transaccion.estado)
+
+        actualizada = await self.adaptador_ordenes.notificar_resultado_com09(
+            orden_id=transaccion.orden_id,
+            nuevo_estado=estado_orden_destino,
+            transaccion_id=transaccion.transaccion_id,
+        )
+        if not actualizada:
+            raise ErrorAplicacion(404, "La orden indicada no existe")
+
+        return {
+            "transaccionId": transaccion.transaccion_id,
+            "ordenId": transaccion.orden_id,
+            "estadoTransaccion": transaccion.estado.value,
+            "estadoOrden": estado_orden_destino,
+            "sincronizado": True,
+        }
