@@ -32,7 +32,7 @@ def validar_cantidad_agregar(cantidad: int) -> None:
 
 def validar_juego_vendible(contrato_juego: dict) -> None:
     """HU-26: el juego debe existir (COM-11) y no estar INACTIVO."""
-    if not contrato_juego.get("exists") or contrato_juego.get("status") == ESTADO_JUEGO_INACTIVO:
+    if not contrato_juego.get("existe") or contrato_juego.get("estado") == ESTADO_JUEGO_INACTIVO:
         raise ErrorAplicacion(404, MENSAJE_JUEGO_NO_EXISTE)
 
 
@@ -52,13 +52,12 @@ def validar_stock_suficiente(cantidad_solicitada: int, disponibles: int) -> None
 
 
 # ---------------------------------------------------------------------
-# HU-29: Descuento progresivo por volumen (RN-08). Configuración estática de Carrito.Domain.
+# HU-29: Descuento progresivo por volumen (RN-08).
 # ---------------------------------------------------------------------
 
 ESTADO_JUEGO_ESTRENO = "ESTRENO"
-UMBRAL_DESCUENTO_VOLUMEN = 3          # cantidad mínima para aplicar RN-08
-PORCENTAJE_DESCUENTO_VOLUMEN = 0.10   # 10 % por unidad
-# RN-07: no se aplican descuentos a juegos en PREVENTA o ESTRENO (no existen cupones en el alcance).
+UMBRAL_DESCUENTO_VOLUMEN = 3
+PORCENTAJE_DESCUENTO_VOLUMEN = 0.10
 ESTADOS_SIN_DESCUENTO = (ESTADO_JUEGO_PREVENTA, ESTADO_JUEGO_ESTRENO)
 
 
@@ -73,7 +72,7 @@ def calcular_desglose(precio_unitario: float, precio_piso: float, cantidad: int,
     HU-29: desglose monetario de un ítem.
     - RN-07: PREVENTA / ESTRENO sin descuentos.
     - RN-08: si el juego está ACTIVO y cantidad >= umbral, descuento del 10 % por unidad.
-    - RN-02: ningún precio unitario con descuento puede ser menor que floorPrice.
+    - RN-02: ningún precio unitario con descuento puede ser menor que precioPiso.
     """
     descuento_unitario = 0.0
     if estado_juego not in ESTADOS_SIN_DESCUENTO and cantidad >= UMBRAL_DESCUENTO_VOLUMEN:
@@ -109,10 +108,7 @@ class Carrito(Base):
 
 
 class ItemCarrito(Base):
-    """
-    Ítem del carrito. No almacena el precio: los precios vigentes se obtienen siempre del
-    Catálogo vía COM-11 (MOD-04 no recalcula RN-01).
-    """
+    """Ítem del carrito. Los precios vigentes se obtienen siempre del Catálogo vía COM-11."""
     __tablename__ = "carrito_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -124,20 +120,20 @@ class ItemCarrito(Base):
 
 
 # =====================================================================
-# 3. ESQUEMAS DE ENTRADA / SALIDA (Pydantic DTOs)
+# 3. ESQUEMAS DE ENTRADA / SALIDA (Pydantic DTOs - camelCase en español)
 # =====================================================================
 
 class AgregarItemEntrada(BaseModel):
     """Contrato de entrada de HU-26."""
-    gameId: int
+    juegoId: int
     cantidad: int = 1
 
-    model_config = {"json_schema_extra": {"examples": [{"gameId": 101, "cantidad": 1}]}}
+    model_config = {"json_schema_extra": {"examples": [{"juegoId": 101, "cantidad": 1}]}}
 
 
 class ItemCarritoSalida(BaseModel):
     itemId: int
-    gameId: int
+    juegoId: int
     titulo: Optional[str] = None
     cantidad: int
     precioUnitario: float
@@ -159,7 +155,7 @@ class ActualizarCantidadEntrada(BaseModel):
 
 class DesgloseItemSalida(BaseModel):
     itemId: int
-    gameId: int
+    juegoId: int
     cantidad: int
     precioUnitario: float
     descuentoVolumen: float
