@@ -1,5 +1,5 @@
 """
-Endpoints internos y públicos de MOD-06 Despacho y Biblioteca (HU-41 a HU-43).
+Endpoints internos y públicos de MOD-06 Despacho y Biblioteca (HU-41 a HU-44).
 """
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
@@ -10,6 +10,8 @@ from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.despacho import (
     ClaveReveladaSalida,
     DatosDespachoCOM10,
+    LicenciaBibliotecaSalida,
+    RespuestaBibliotecaLicencias,
     RespuestaDespachoCOM10,
     RespuestaRevelarClave,
     SolicitudDespachoCOM10,
@@ -64,6 +66,45 @@ def despachar_orden_com10(
         content={
             "message": "Licencias digitales asignadas al usuario",
             "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.get(
+    "/licencias",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaBibliotecaLicencias,
+    summary="Desplegar biblioteca y listado de licencias digitales del usuario (HU-44)",
+    description=(
+        "Consulta el listado de licencias digitales adquiridas por el usuario autenticado "
+        "con sus claves en formato enmascarado por seguridad."
+    ),
+    responses={
+        401: {"description": "Token inválido, expirado o ausente"},
+        503: {"description": "No fue posible consultar la biblioteca de licencias"},
+    },
+)
+def listar_licencias_biblioteca(
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    licencias = servicio.listar_biblioteca_usuario(usuario_id=usuario.id)
+    datos = [LicenciaBibliotecaSalida(**item).model_dump() for item in licencias]
+    if not datos:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "message": "El usuario aún no tiene licencias digitales en su biblioteca",
+                "data": [],
+                "success": False,
+            },
+        )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Biblioteca de licencias obtenida exitosamente",
+            "data": datos,
             "success": True,
         },
     )

@@ -190,3 +190,20 @@ class RepositorioDespacho:
         except SQLAlchemyError as error:
             self.db.rollback()
             raise ErrorAplicacion(503, mensaje_error_bd) from error
+
+    def listar_licencias_por_usuario(
+        self,
+        usuario_id: int,
+        mensaje_error_bd: str = "No fue posible consultar la biblioteca de licencias",
+    ) -> list[LicenciaUsuario]:
+        """HU-44: Lista todas las licencias digitales asignadas al usuario autenticado."""
+        try:
+            registros = (
+                self.db.query(LicenciaUsuarioORM)
+                .filter(LicenciaUsuarioORM.usuario_id == usuario_id)
+                .order_by(LicenciaUsuarioORM.asignada_en.desc(), LicenciaUsuarioORM.id.desc())
+                .all()
+            )
+            return [self._licencia_a_dominio(reg) for reg in registros]
+        except SQLAlchemyError as error:
+            raise ErrorAplicacion(503, mensaje_error_bd) from error

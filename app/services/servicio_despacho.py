@@ -1,5 +1,5 @@
 """
-Servicio de aplicación para MOD-06 Despacho y Biblioteca (HU-41 a HU-43).
+Servicio de aplicación para MOD-06 Despacho y Biblioteca (HU-41 a HU-44).
 """
 import uuid
 from datetime import datetime, timezone
@@ -335,3 +335,27 @@ class ServicioDespacho:
             "instruccionActivacion": INSTRUCCION_ACTIVACION_ESTANDAR,
             "reveladaEn": fecha_iso,
         }
+
+    def listar_biblioteca_usuario(
+        self,
+        usuario_id: int,
+    ) -> list[dict[str, Any]]:
+        """
+        HU-44: Despliega la biblioteca digital del usuario autenticado con sus
+        licencias enmascaradas por seguridad.
+        """
+        licencias = self.repositorio.listar_licencias_por_usuario(usuario_id)
+        return [
+            {
+                "licenciaId": lic.licencia_id,
+                "ordenId": lic.orden_id,
+                "juegoId": lic.juego_id,
+                "titulo": lic.titulo_juego,
+                "plataforma": lic.plataforma,
+                "claveEnmascarada": lic.clave_enmascarada,
+                "revelada": lic.revelada,
+                "reveladaEn": lic.revelada_en.isoformat() if lic.revelada_en else None,
+                "asignadaEn": lic.asignada_en.isoformat(),
+            }
+            for lic in licencias
+        ]

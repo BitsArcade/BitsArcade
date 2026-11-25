@@ -219,3 +219,23 @@ class RespuestaRevelarClave(BaseModel):
     message: str
     data: Optional[ClaveReveladaSalida] = None
     success: bool
+
+
+class LicenciaBibliotecaSalida(BaseModel):
+    """Contrato de salida de HU-44 para cada licencia en la biblioteca del usuario."""
+
+    licenciaId: str
+    ordenId: int
+    juegoId: int
+    titulo: str
+    plataforma: str
+    claveEnmascarada: str
+    revelada: bool
+    reveladaEn: Optional[str] = None
+    asignadaEn: str
+
+
+class RespuestaBibliotecaLicencias(BaseModel):
+    message: str
+    data: list[LicenciaBibliotecaSalida]
+    success: bool
