@@ -1,5 +1,5 @@
 """
-Servicio de aplicación para MOD-06 Despacho y Biblioteca (HU-41 a HU-44).
+Servicio de aplicación para MOD-06 Despacho y Biblioteca (HU-41 a HU-50).
 """
 import uuid
 from datetime import datetime, timezone
@@ -208,6 +208,40 @@ class ServicioDespacho:
             ],
         }
 
+    def validar_unicidad_entrega_orden(
+        self,
+        orden_id: int,
+        reserva_ids_explicitas: Optional[list[str]] = None,
+        usuario_id: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """
+        HU-45 (RN-10): Valida que ninguna reserva o clave de la orden haya sido
+        entregada previamente a otra orden/usuario, autorizando el despacho o
+        retornando 409 si ya fue reasignada.
+        """
+        reservas_bd, key_ids = self.repositorio.obtener_reservas_y_keys_de_orden(
+            orden_id=orden_id,
+            mensaje_error_bd="No fue posible validar la entrega",
+        )
+        reserva_ids = list(reservas_bd)
+        if reserva_ids_explicitas:
+            for rid in reserva_ids_explicitas:
+                if rid and rid not in reserva_ids:
+                    reserva_ids.append(rid)
+
+        asignaciones_previas = self.repositorio.consultar_asignaciones_previas(
+            orden_id=orden_id,
+            reserva_ids=reserva_ids,
+            key_ids=key_ids,
+            mensaje_error_bd="No fue posible validar la entrega",
+        )
+        return ReglasDespacho.validar_elegibilidad_entrega(
+            orden_id=orden_id,
+            reserva_ids=reserva_ids,
+            asignaciones_existentes=asignaciones_previas,
+            usuario_id=usuario_id,
+        )
+
     def marcar_orden_como_entregada(
         self,
         orden_id: int,
@@ -231,13 +265,29 @@ class ServicioDespacho:
         self, solicitud: SolicitudDespachoCOM10
     ) -> dict[str, Any]:
         """
-        HU-41 / COM-10 + HU-42 / COM-09: Asigna de forma idempotente e inmutable una
-        licencia digital al perfil del usuario por cada ítem de la orden pagada y
-        cierra la orden como ENTREGADA.
+        HU-41 / COM-10 + HU-45 (RN-10) + HU-42 / COM-09: Valida unicidad e
+        inmutabilidad de entrega, asigna de forma idempotente cada licencia al
+        perfil del usuario y cierra la orden como ENTREGADA.
         """
         existente = self.repositorio.obtener_despacho_por_orden_id(solicitud.ordenId)
         if existente is not None:
             return self._serializar_despacho(existente)
+
+        reservas_solicitud = [
+            item.reservaId for item in solicitud.items if item.reservaId
+        ]
+        if reservas_solicitud:
+            asignaciones_previas = self.repositorio.consultar_asignaciones_previas(
+                orden_id=solicitud.ordenId,
+                reserva_ids=reservas_solicitud,
+                mensaje_error_bd="No fue posible procesar el despacho de la orden",
+            )
+            ReglasDespacho.validar_elegibilidad_entrega(
+                orden_id=solicitud.ordenId,
+                reserva_ids=reservas_solicitud,
+                asignaciones_existentes=asignaciones_previas,
+                usuario_id=solicitud.usuarioId,
+            )
 
         if self.adaptador_inventario is None:
             raise ErrorAplicacion(
@@ -287,7 +337,6 @@ class ServicioDespacho:
         )
         guardado = self.repositorio.guardar_despacho_con_licencias(nuevo_despacho)
 
-        # HU-42: Tras asignar las licencias de la orden pagada, cerrarla como ENTREGADA vía COM-09
         if self.adaptador_ordenes is not None:
             self.marcar_orden_como_entregada(
                 orden_id=solicitud.ordenId,
@@ -341,7 +390,7 @@ class ServicioDespacho:
         usuario_id: int,
     ) -> list[dict[str, Any]]:
         """
-        HU-44: Despliega la biblioteca digital del usuario autenticado con sus
+        Despliega la biblioteca digital del usuario autenticado con sus
         licencias enmascaradas por seguridad.
         """
         licencias = self.repositorio.listar_licencias_por_usuario(usuario_id)

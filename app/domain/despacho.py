@@ -1,5 +1,5 @@
 """
-Dominio, modelos ORM, esquemas Pydantic y reglas de negocio de MOD-06 Despacho (HU-41 a HU-46).
+Dominio, modelos ORM, esquemas Pydantic y reglas de negocio de MOD-06 Despacho (HU-41 a HU-50).
 """
 import hashlib
 import re
@@ -7,7 +7,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, Column, DateTime, Integer, String
@@ -50,7 +50,10 @@ class DespachoOrdenORM(Base):
 
 
 class LicenciaUsuarioORM(Base):
-    """Licencia digital asignada de forma única e inmutable al perfil del usuario (HU-41)."""
+    """
+    Licencia digital asignada de forma única e inmutable al perfil del usuario (HU-41 / HU-45).
+    Restricción única en BD sobre reserva_id, key_inventario_id, clave_digital y huella_clave (RN-10).
+    """
 
     __tablename__ = "licencias_usuario"
 
@@ -62,7 +65,7 @@ class LicenciaUsuarioORM(Base):
     juego_id = Column(Integer, nullable=False, index=True)
     titulo_juego = Column(String(180), nullable=False)
     plataforma = Column(String(60), nullable=False, default="PC")
-    reserva_id = Column(String(64), nullable=True)
+    reserva_id = Column(String(64), unique=True, nullable=True, index=True)
     key_inventario_id = Column(Integer, unique=True, nullable=True, index=True)
     clave_digital = Column(String(64), unique=True, nullable=False)
     clave_enmascarada = Column(String(32), nullable=False)
@@ -73,11 +76,11 @@ class LicenciaUsuarioORM(Base):
 
 
 # ==============================================================================
-# ENTIDADES Y REGLAS DE DOMINIO
+# ENTIDADES Y REGLAS DE DOMINIO (Despacho.Dominio)
 # ==============================================================================
 @dataclass(frozen=True)
 class LicenciaUsuario:
-    """Entidad inmutable de licencia digital asignada al usuario (HU-41)."""
+    """Entidad inmutable de licencia digital asignada al usuario (HU-41 / RN-10)."""
 
     licencia_id: str
     despacho_id: str
@@ -159,9 +162,59 @@ class ReglasDespacho:
             raise ErrorAplicacion(404, "La licencia indicada no existe")
         return licencia
 
+    @staticmethod
+    def validar_elegibilidad_entrega(
+        orden_id: int,
+        reserva_ids: list[str],
+        asignaciones_existentes: list[LicenciaUsuario],
+        usuario_id: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """
+        HU-45 (RN-10): Valida unicidad e inmutabilidad de entrega.
+        - Si alguna reserva o clave ya fue asignada a otra orden o usuario -> 409.
+        - Si todas las asignaciones pertenecen a la misma orden -> idempotente (200).
+        - Si no existen entregas previas -> autoriza el despacho (200, entregada=False).
+        """
+        for asignacion in asignaciones_existentes:
+            if asignacion.orden_id != orden_id or (
+                usuario_id is not None and asignacion.usuario_id != usuario_id
+            ):
+                raise ErrorAplicacion(
+                    409, "La licencia ya fue entregada y no puede reasignarse"
+                )
+
+        entregadas_por_reserva = {
+            asignacion.reserva_id: True
+            for asignacion in asignaciones_existentes
+            if asignacion.reserva_id
+        }
+
+        if reserva_ids:
+            items = [
+                {
+                    "reservaId": rid,
+                    "entregada": entregadas_por_reserva.get(rid, False),
+                }
+                for rid in reserva_ids
+            ]
+        else:
+            items = [
+                {
+                    "reservaId": asignacion.reserva_id or asignacion.licencia_id,
+                    "entregada": True,
+                }
+                for asignacion in asignaciones_existentes
+            ]
+
+        return {
+            "ordenId": orden_id,
+            "autorizado": True,
+            "items": items,
+        }
+
 
 # ==============================================================================
-# ESQUEMAS PYDANTIC (Contratos COM-10 y API español camelCase)
+# ESQUEMAS PYDANTIC (Contratos COM y API español camelCase)
 # ==============================================================================
 class ItemDespachoCOM10(BaseModel):
     juegoId: int = Field(..., gt=0)
@@ -222,7 +275,7 @@ class RespuestaRevelarClave(BaseModel):
 
 
 class LicenciaBibliotecaSalida(BaseModel):
-    """Contrato de salida de HU-44 para cada licencia en la biblioteca del usuario."""
+    """Contrato de salida para cada licencia en la biblioteca del usuario."""
 
     licenciaId: str
     ordenId: int
@@ -238,4 +291,27 @@ class LicenciaBibliotecaSalida(BaseModel):
 class RespuestaBibliotecaLicencias(BaseModel):
     message: str
     data: list[LicenciaBibliotecaSalida]
+    success: bool
+
+
+class ItemElegibilidadEntregaSalida(BaseModel):
+    """Ítem de verificación de elegibilidad de entrega en HU-45."""
+
+    reservaId: str
+    entregada: bool
+
+
+class DatosElegibilidadEntrega(BaseModel):
+    """Contrato de datos de salida de HU-45."""
+
+    ordenId: int
+    autorizado: bool
+    items: list[ItemElegibilidadEntregaSalida]
+
+
+class RespuestaElegibilidadEntrega(BaseModel):
+    """Contrato estándar de respuesta de HU-45."""
+
+    message: str
+    data: Optional[DatosElegibilidadEntrega] = None
     success: bool

@@ -1,7 +1,9 @@
 """
-Endpoints internos y públicos de MOD-06 Despacho y Biblioteca (HU-41 a HU-44).
+Endpoints internos y públicos de MOD-06 Despacho y Biblioteca (HU-41 a HU-50).
 """
-from fastapi import APIRouter, Depends, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -10,9 +12,11 @@ from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.despacho import (
     ClaveReveladaSalida,
     DatosDespachoCOM10,
+    DatosElegibilidadEntrega,
     LicenciaBibliotecaSalida,
     RespuestaBibliotecaLicencias,
     RespuestaDespachoCOM10,
+    RespuestaElegibilidadEntrega,
     RespuestaRevelarClave,
     SolicitudDespachoCOM10,
 )
@@ -24,12 +28,12 @@ from app.services.servicio_despacho import (
 
 enrutador_despacho_interno = APIRouter(
     prefix="/interno/v1/despacho",
-    tags=["MOD-06 Despacho (Interno COM-10)"],
+    tags=["MOD-06 Despacho (Interno COM-10 / HU-45)"],
 )
 
 enrutador_biblioteca = APIRouter(
     prefix="/api/v1/biblioteca",
-    tags=["MOD-06 Despacho y Biblioteca (HU-43 a HU-46)"],
+    tags=["MOD-06 Despacho y Biblioteca (HU-43 a HU-50)"],
 )
 
 
@@ -41,6 +45,41 @@ def obtener_servicio_despacho(
     return ServicioDespacho(
         repositorio=repositorio,
         adaptador_inventario=adaptador_inventario,
+    )
+
+
+@enrutador_despacho_interno.get(
+    "/ordenes/{ordenId}/elegibilidad",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaElegibilidadEntrega,
+    summary="Validar unicidad e inmutabilidad de entrega para una orden (HU-45)",
+    description=(
+        "Verifica en Despacho.Dominio que ninguna clave o reserva de la orden haya sido "
+        "entregada previamente a otra orden/usuario (RN-10). Es idempotente si la misma "
+        "orden ya fue despachada."
+    ),
+    responses={
+        409: {"description": "La licencia ya fue entregada y no puede reasignarse"},
+        503: {"description": "No fue posible validar la entrega"},
+    },
+)
+def validar_elegibilidad_entrega_orden(
+    ordenId: int,
+    reservaId: Optional[list[str]] = Query(default=None),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    resultado = servicio.validar_unicidad_entrega_orden(
+        orden_id=ordenId,
+        reserva_ids_explicitas=reservaId,
+    )
+    datos = DatosElegibilidadEntrega(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Entrega autorizada",
+            "data": datos.model_dump(),
+            "success": True,
+        },
     )
 
 
@@ -75,7 +114,7 @@ def despachar_orden_com10(
     "/licencias",
     status_code=status.HTTP_200_OK,
     response_model=RespuestaBibliotecaLicencias,
-    summary="Desplegar biblioteca y listado de licencias digitales del usuario (HU-44)",
+    summary="Desplegar biblioteca y listado de licencias digitales del usuario",
     description=(
         "Consulta el listado de licencias digitales adquiridas por el usuario autenticado "
         "con sus claves en formato enmascarado por seguridad."
