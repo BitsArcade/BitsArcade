@@ -1,4 +1,4 @@
-"""Pruebas de HU-28: Eliminar ítem del carrito (DELETE /api/v1/carrito/items/{itemId})."""
+﻿"""Pruebas de HU-28: Eliminar ítem del carrito (DELETE /api/v1/carrito/items/{itemId})."""
 from sqlalchemy.exc import OperationalError
 
 from app.repositories.repositorio_carrito import RepositorioCarrito
@@ -6,7 +6,7 @@ from tests.conftest import encabezado_auth
 
 
 def _agregar(cliente, juego_id, cantidad=1, usuario_id=1):
-    respuesta = cliente.post("/api/v1/carrito/items", json={"gameId": juego_id, "cantidad": cantidad},
+    respuesta = cliente.post("/api/v1/carrito/items", json={"juegoId": juego_id, "cantidad": cantidad},
                              headers=encabezado_auth(usuario_id))
     assert respuesta.status_code == 201
     return respuesta.json()["data"]
@@ -33,9 +33,9 @@ def test_recalcula_totales(cliente, crear_juego, crear_keys):
     crear_keys(otro.id, disponibles=5)
     _agregar(cliente, juego.id)
     carrito = _agregar(cliente, otro.id)
-    item_otro = next(i["itemId"] for i in carrito["items"] if i["gameId"] == otro.id)
+    item_otro = next(i["itemId"] for i in carrito["items"] if i["juegoId"] == otro.id)
     datos = cliente.delete(f"/api/v1/carrito/items/{item_otro}", headers=encabezado_auth()).json()["data"]
-    assert [i["gameId"] for i in datos["items"]] == [juego.id]
+    assert [i["juegoId"] for i in datos["items"]] == [juego.id]
     assert datos["subtotal"] == 238000
 
 

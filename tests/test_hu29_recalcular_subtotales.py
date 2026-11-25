@@ -1,4 +1,4 @@
-"""Pruebas de HU-29: Recalcular subtotales con promociones y volumen (PATCH /api/v1/carrito/items/{itemId})."""
+﻿"""Pruebas de HU-29: Recalcular subtotales con promociones y volumen (PATCH /api/v1/carrito/items/{itemId})."""
 from sqlalchemy.exc import OperationalError
 
 from app.domain.carrito import UMBRAL_DESCUENTO_VOLUMEN, PORCENTAJE_DESCUENTO_VOLUMEN, calcular_desglose
@@ -8,7 +8,7 @@ from tests.conftest import encabezado_auth
 
 
 def _agregar(cliente, juego_id, cantidad=1, usuario_id=1) -> int:
-    respuesta = cliente.post("/api/v1/carrito/items", json={"gameId": juego_id, "cantidad": cantidad},
+    respuesta = cliente.post("/api/v1/carrito/items", json={"juegoId": juego_id, "cantidad": cantidad},
                              headers=encabezado_auth(usuario_id))
     assert respuesta.status_code == 201
     return respuesta.json()["data"]["items"][0]["itemId"]
@@ -57,7 +57,7 @@ def test_flujo_exitoso(cliente, crear_juego, crear_keys):
     assert respuesta.status_code == 200
     assert respuesta.json() == {
         "message": "Subtotales recalculados",
-        "data": {"itemId": item_id, "gameId": juego.id, "cantidad": 3, "precioUnitario": 238000,
+        "data": {"itemId": item_id, "juegoId": juego.id, "cantidad": 3, "precioUnitario": 238000,
                  "descuentoVolumen": 71400, "subtotal": 642600, "moneda": "COP"},
         "success": True,
     }
