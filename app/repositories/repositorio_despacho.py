@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import asc, desc, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -201,6 +201,38 @@ class RepositorioDespacho:
             self.db.rollback()
             raise ErrorAplicacion(
                 503, "No fue posible revelar la clave digital"
+            ) from error
+
+    def listarComprasPorUsuarioYRango(
+        self,
+        usuarioId: int,
+        fechaDesde: datetime,
+        fechaHastaExclusiva: datetime,
+        orden: str,
+    ) -> list[DespachoOrden]:
+        fechaDesdeUtc = fechaDesde.astimezone(timezone.utc).replace(tzinfo=None)
+        fechaHastaUtc = (
+            fechaHastaExclusiva.astimezone(timezone.utc).replace(tzinfo=None)
+        )
+        direccion = asc if orden == "asc" else desc
+        try:
+            filas = (
+                self.db.query(DespachoOrdenORM)
+                .filter(
+                    DespachoOrdenORM.usuario_id == usuarioId,
+                    DespachoOrdenORM.creado_en >= fechaDesdeUtc,
+                    DespachoOrdenORM.creado_en < fechaHastaUtc,
+                )
+                .order_by(
+                    direccion(DespachoOrdenORM.creado_en),
+                    direccion(DespachoOrdenORM.orden_id),
+                )
+                .all()
+            )
+            return [self._a_entidad_despacho(fila, []) for fila in filas]
+        except SQLAlchemyError as error:
+            raise ErrorAplicacion(
+                503, "No fue posible consultar el historial"
             ) from error
 
     def listar_licencias_por_usuario(

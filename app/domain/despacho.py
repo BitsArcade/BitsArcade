@@ -5,7 +5,7 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -18,6 +18,7 @@ from app.core.respuestas import ErrorAplicacion
 INSTRUCCION_ACTIVACION_ESTANDAR = (
     "Copia esta clave y actívala en tu cuenta de Steam/Epic antes de compartir pantalla"
 )
+ZONA_HORARIA_BOGOTA = timezone(timedelta(hours=-5), name="America/Bogota")
 
 
 class EstadoDespacho(str, Enum):
@@ -187,6 +188,48 @@ class ReglasDespacho:
             ),
             "reembolsable": not revelada,
         }
+
+    @staticmethod
+    def validarRangoFechasHistorial(
+        desde: str, hasta: str
+    ) -> tuple[datetime, datetime]:
+        """HU-50: valida fechas y calcula el intervalo inclusivo en hora de Bogotá."""
+        try:
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", desde) is None:
+                raise ValueError
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", hasta) is None:
+                raise ValueError
+            fechaDesde = date.fromisoformat(desde)
+            fechaHasta = date.fromisoformat(hasta)
+            if fechaDesde.isoformat() != desde or fechaHasta.isoformat() != hasta:
+                raise ValueError
+        except ValueError as error:
+            raise ErrorAplicacion(
+                400, "Formato de fecha no válido. Debe ser YYYY-MM-DD"
+            ) from error
+
+        if fechaDesde > fechaHasta:
+            raise ErrorAplicacion(
+                400, "La fecha 'desde' no puede ser posterior a 'hasta'"
+            )
+
+        inicio = datetime.combine(
+            fechaDesde, time.min, tzinfo=ZONA_HORARIA_BOGOTA
+        ).astimezone(timezone.utc)
+        finExclusivo = datetime.combine(
+            fechaHasta + timedelta(days=1),
+            time.min,
+            tzinfo=ZONA_HORARIA_BOGOTA,
+        ).astimezone(timezone.utc)
+        return inicio, finExclusivo
+
+    @staticmethod
+    def validarOrdenHistorial(orden: str) -> str:
+        """HU-50: limita la dirección de ordenamiento a ascendente o descendente."""
+        ordenNormalizado = orden.strip().lower()
+        if ordenNormalizado not in ("asc", "desc"):
+            raise ErrorAplicacion(400, "El orden debe ser 'asc' o 'desc'")
+        return ordenNormalizado
 
     @staticmethod
     def validar_propiedad_compra(
@@ -391,6 +434,19 @@ class EstadoLicenciaSalida(BaseModel):
 class RespuestaEstadoLicencias(BaseModel):
     message: str
     data: list[EstadoLicenciaSalida]
+    success: bool
+
+
+class CompraHistorialSalida(BaseModel):
+    orderId: int
+    fecha: str
+    total: float
+    moneda: str
+
+
+class RespuestaHistorialCompras(BaseModel):
+    message: str
+    data: list[CompraHistorialSalida]
     success: bool
 
 

@@ -462,6 +462,36 @@ class ServicioDespacho:
         )
         return [ReglasDespacho.calcularEstadoLicencia(licencia) for licencia in licencias]
 
+    def consultarHistorialCompras(
+        self,
+        usuarioId: int,
+        desde: str,
+        hasta: str,
+        orden: str = "desc",
+    ) -> list[dict[str, Any]]:
+        """HU-50: filtra las compras propias por fechas del calendario de Bogotá."""
+        fechaDesde, fechaHastaExclusiva = ReglasDespacho.validarRangoFechasHistorial(
+            desde, hasta
+        )
+        ordenValidado = ReglasDespacho.validarOrdenHistorial(orden)
+        compras = self.repositorio.listarComprasPorUsuarioYRango(
+            usuarioId=usuarioId,
+            fechaDesde=fechaDesde,
+            fechaHastaExclusiva=fechaHastaExclusiva,
+            orden=ordenValidado,
+        )
+        return [
+            {
+                "orderId": compra.orden_id,
+                "fecha": compra.creado_en.astimezone(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "total": float(compra.total),
+                "moneda": compra.moneda,
+            }
+            for compra in compras
+        ]
+
     def consultar_detalle_compra_pasada(
         self,
         orden_id: int,

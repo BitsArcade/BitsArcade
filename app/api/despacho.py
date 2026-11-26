@@ -11,6 +11,7 @@ from app.core.base_datos import get_db
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.despacho import (
     ClaveReveladaSalida,
+    CompraHistorialSalida,
     DatosComprobanteCompraSalida,
     DatosDespachoCOM10,
     DatosDetalleCompraSalida,
@@ -22,6 +23,7 @@ from app.domain.despacho import (
     RespuestaDespachoCOM10,
     RespuestaDetalleCompra,
     RespuestaElegibilidadEntrega,
+    RespuestaHistorialCompras,
     RespuestaRevelarClave,
     RespuestaEstadoLicencias,
     SolicitudDespachoCOM10,
@@ -273,6 +275,67 @@ def revelar_clave_licencia(
         content={
             "message": "Clave digital revelada",
             "data": datos.model_dump(),
+            "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.get(
+    "/compras",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaHistorialCompras,
+    summary="Filtrar historial de compras por fechas (HU-50)",
+    description=(
+        "Consulta las compras del cliente autenticado dentro de un rango inclusivo "
+        "de fechas interpretado en la zona horaria America/Bogota."
+    ),
+    responses={
+        400: {
+            "description": (
+                "Formato de fecha no válido o fecha inicial posterior a la final"
+            )
+        },
+        401: {"description": "Token inválido, expirado o ausente"},
+        503: {"description": "No fue posible consultar el historial"},
+    },
+)
+def consultarHistorialCompras(
+    desde: str = Query(
+        ...,
+        description="Fecha inicial inclusiva con formato YYYY-MM-DD",
+    ),
+    hasta: str = Query(
+        ...,
+        description="Fecha final inclusiva con formato YYYY-MM-DD",
+    ),
+    orden: str = Query(
+        default="desc",
+        description="Orden de resultados: asc o desc (por defecto desc)",
+    ),
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    compras = servicio.consultarHistorialCompras(
+        usuarioId=usuario.id,
+        desde=desde,
+        hasta=hasta,
+        orden=orden,
+    )
+    datos = [CompraHistorialSalida(**compra).model_dump() for compra in compras]
+    if not datos:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "message": "No existen compras en el rango indicado",
+                "data": [],
+                "success": False,
+            },
+        )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Consulta de historial exitosa",
+            "data": datos,
             "success": True,
         },
     )
