@@ -11,11 +11,13 @@ from app.core.base_datos import get_db
 from app.core.seguridad import UsuarioAutenticado, obtener_usuario_autenticado
 from app.domain.despacho import (
     ClaveReveladaSalida,
+    DatosComprobanteCompraSalida,
     DatosDespachoCOM10,
     DatosDetalleCompraSalida,
     DatosElegibilidadEntrega,
     LicenciaBibliotecaSalida,
     RespuestaBibliotecaLicencias,
+    RespuestaComprobanteCompra,
     RespuestaDespachoCOM10,
     RespuestaDetalleCompra,
     RespuestaElegibilidadEntrega,
@@ -27,6 +29,7 @@ from app.services.servicio_despacho import (
     AdaptadorOrdenYInventarioLocal,
     ServicioDespacho,
 )
+from app.services.servicio_orden import ServicioOrden
 
 enrutador_despacho_interno = APIRouter(
     prefix="/interno/v1/despacho",
@@ -47,6 +50,7 @@ def obtener_servicio_despacho(
     return ServicioDespacho(
         repositorio=repositorio,
         adaptador_inventario=adaptador_inventario,
+        servicioOrden=ServicioOrden(),
     )
 
 
@@ -264,5 +268,49 @@ def consultar_detalle_compra_pasada(
             "message": "Consulta de compra exitosa",
             "data": datos.model_dump(),
             "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.get(
+    "/compras/{ordenId}/comprobante",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaComprobanteCompra,
+    summary="Descargar comprobante digital de compra (HU-48)",
+    description=(
+        "Genera un comprobante simulado en formato JSON para una compra del cliente "
+        "autenticado. No es una factura electrónica. El perfil del comprador se simula "
+        "mientras MOD-01 no defina la ruta del contrato COM-05."
+    ),
+    responses={
+        401: {"description": "Token inválido, expirado o ausente"},
+        404: {"description": "La compra indicada no existe"},
+        409: {"description": "El desglose financiero no coincide con el total"},
+        503: {"description": "No fue posible generar el comprobante"},
+    },
+)
+def descargarComprobanteCompra(
+    ordenId: int,
+    sesion: Session = Depends(get_db),
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    resultado = servicio.generarComprobanteDigital(
+        sesion=sesion,
+        ordenId=ordenId,
+        usuarioId=usuario.id,
+    )
+    datos = DatosComprobanteCompraSalida(**resultado)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Comprobante generado",
+            "data": datos.model_dump(),
+            "success": True,
+        },
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="comprobante-{datos.numero}.json"'
+            )
         },
     )

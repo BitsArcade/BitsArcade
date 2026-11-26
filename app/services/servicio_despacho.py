@@ -14,6 +14,7 @@ from app.domain.despacho import (
     DespachoOrden,
     EstadoDespacho,
     LicenciaUsuario,
+    CompradorComprobanteSalida,
     ReglasDespacho,
     SolicitudDespachoCOM10,
 )
@@ -43,6 +44,22 @@ class AdaptadorOrdenesCOM09(Protocol):
         para transicionar la orden de PAGADA a ENTREGADA (HU-42).
         """
         ...
+
+
+class AdaptadorPerfilComprador(Protocol):
+    def obtenerPerfil(self, usuarioId: int) -> CompradorComprobanteSalida:
+        """Consulta el perfil del comprador mediante el contrato pendiente COM-05."""
+        ...
+
+
+class AdaptadorUsuariosSimulado:
+    """Perfil local de demostración mientras MOD-01 no publique la ruta COM-05."""
+
+    def obtenerPerfil(self, usuarioId: int) -> CompradorComprobanteSalida:
+        return CompradorComprobanteSalida(
+            nombre=f"Cliente {usuarioId}",
+            correo=f"cliente-{usuarioId}@bitarcade.local",
+        )
 
 
 class AdaptadorOrdenesLocalCOM09:
@@ -177,9 +194,15 @@ class ServicioDespacho:
         repositorio: RepositorioDespacho,
         adaptador_inventario: Optional[AdaptadorOrdenYInventarioDespacho] = None,
         adaptador_ordenes: Optional[AdaptadorOrdenesCOM09] = None,
+        servicioOrden: Optional[ServicioOrden] = None,
+        adaptadorPerfilComprador: Optional[AdaptadorPerfilComprador] = None,
     ):
         self.repositorio = repositorio
         self.adaptador_inventario = adaptador_inventario
+        self.servicioOrden = servicioOrden or ServicioOrden()
+        self.adaptadorPerfilComprador = (
+            adaptadorPerfilComprador or AdaptadorUsuariosSimulado()
+        )
         if adaptador_ordenes is not None:
             self.adaptador_ordenes = adaptador_ordenes
         elif adaptador_inventario is not None and hasattr(adaptador_inventario, "db"):
@@ -472,4 +495,73 @@ class ServicioDespacho:
             "transaccionId": compra_validada.transaccion_id,
             "estadoOrden": estado_orden,
             "items": items,
+        }
+
+    def generarComprobanteDigital(
+        self,
+        sesion: Session,
+        ordenId: int,
+        usuarioId: int,
+    ) -> dict[str, Any]:
+        """HU-48: genera el comprobante JSON de una compra propia ya despachada."""
+        compra = self.repositorio.obtener_despacho_por_orden_id(
+            orden_id=ordenId,
+            mensaje_error_bd="No fue posible generar el comprobante",
+        )
+        compraValidada = ReglasDespacho.validar_propiedad_compra(
+            compra=compra,
+            usuario_id=usuarioId,
+        )
+
+        try:
+            liquidacion = self.servicioOrden.consultar_liquidacion(
+                sesion=sesion,
+                usuario=usuarioId,
+                orden_id=ordenId,
+            )
+        except ErrorAplicacion as error:
+            if error.status_code == 404:
+                raise ErrorAplicacion(404, "La compra indicada no existe") from error
+            if error.status_code == 503:
+                raise ErrorAplicacion(
+                    503, "No fue posible generar el comprobante"
+                ) from error
+            raise
+
+        datosLiquidacion = liquidacion.get("data")
+        if datosLiquidacion is None:
+            raise ErrorAplicacion(503, "No fue posible generar el comprobante")
+
+        baseGravable = float(datosLiquidacion["baseGravable"])
+        valorIva = float(datosLiquidacion["valorIva"])
+        total = float(compraValidada.total)
+        ReglasDespacho.validarCuadreComprobante(
+            base_gravable=baseGravable,
+            valor_iva=valorIva,
+            total=total,
+        )
+
+        cantidadesPorJuego: dict[tuple[int, str], int] = {}
+        for licencia in compraValidada.licencias:
+            claveJuego = (licencia.juego_id, licencia.titulo_juego)
+            cantidadesPorJuego[claveJuego] = cantidadesPorJuego.get(claveJuego, 0) + 1
+
+        perfilComprador = self.adaptadorPerfilComprador.obtenerPerfil(usuarioId)
+        return {
+            "numero": f"CMP-{ordenId}",
+            "emisor": "BitArcade",
+            "comprador": perfilComprador.model_dump(),
+            "fecha": compraValidada.creado_en.isoformat(),
+            "moneda": compraValidada.moneda,
+            "desglose": {
+                "baseGravable": baseGravable,
+                "valorIva": valorIva,
+                "total": total,
+            },
+            "tasaCambio": float(compraValidada.tasa_cambio),
+            "transaccionId": compraValidada.transaccion_id,
+            "items": [
+                {"titulo": titulo, "cantidad": cantidad}
+                for (_, titulo), cantidad in cantidadesPorJuego.items()
+            ],
         }

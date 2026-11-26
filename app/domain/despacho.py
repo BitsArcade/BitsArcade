@@ -184,6 +184,17 @@ class ReglasDespacho:
         return compra
 
     @staticmethod
+    def validarCuadreComprobante(
+        base_gravable: float, valor_iva: float, total: float
+    ) -> None:
+        """HU-48: verifica que la base más el IVA coincidan con el total cobrado."""
+        if round(base_gravable + valor_iva, 2) != round(total, 2):
+            raise ErrorAplicacion(
+                409,
+                "El desglose financiero de la compra no coincide con el total registrado",
+            )
+
+    @staticmethod
     def normalizar_estado_orden_compra(estado_despacho: EstadoDespacho) -> str:
         """Mapea el estado interno del despacho al estado de orden entregado en el historial."""
         if estado_despacho in (
@@ -378,6 +389,42 @@ class RespuestaDetalleCompra(BaseModel):
 
     message: str
     data: Optional[DatosDetalleCompraSalida] = None
+    success: bool
+
+
+class CompradorComprobanteSalida(BaseModel):
+    nombre: str
+    correo: str
+
+
+class DesgloseComprobanteSalida(BaseModel):
+    baseGravable: float
+    valorIva: float
+    total: float
+
+
+class ItemComprobanteSalida(BaseModel):
+    titulo: str
+    cantidad: int
+
+
+class DatosComprobanteCompraSalida(BaseModel):
+    numero: str
+    emisor: str
+    comprador: CompradorComprobanteSalida
+    fecha: str
+    moneda: str
+    desglose: DesgloseComprobanteSalida
+    tasaCambio: float
+    transaccionId: str
+    items: list[ItemComprobanteSalida]
+
+
+class RespuestaComprobanteCompra(BaseModel):
+    """Contrato de salida de HU-48 para el comprobante descargable."""
+
+    message: str
+    data: Optional[DatosComprobanteCompraSalida] = None
     success: bool
 
 
