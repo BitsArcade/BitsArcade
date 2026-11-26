@@ -454,6 +454,14 @@ class ServicioDespacho:
             for lic in licencias
         ]
 
+    def consultarEstadoLicencias(self, usuarioId: int) -> list[dict[str, Any]]:
+        """HU-49: consulta el estado y la elegibilidad de reembolso de cada licencia."""
+        licencias = self.repositorio.listar_licencias_por_usuario(
+            usuarioId,
+            mensajeErrorBd="No fue posible consultar el estado de las licencias",
+        )
+        return [ReglasDespacho.calcularEstadoLicencia(licencia) for licencia in licencias]
+
     def consultar_detalle_compra_pasada(
         self,
         orden_id: int,

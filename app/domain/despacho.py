@@ -172,6 +172,23 @@ class ReglasDespacho:
         return licencia
 
     @staticmethod
+    def calcularEstadoLicencia(licencia: LicenciaUsuario) -> dict[str, Any]:
+        """HU-49: calcula el estado y la elegibilidad informativa de reembolso."""
+        revelada = licencia.revelada or licencia.revelada_en is not None
+        return {
+            "licenciaId": licencia.licencia_id,
+            "juegoId": licencia.juego_id,
+            "estado": "REVELADA" if revelada else "ENTREGADA",
+            "revelada": revelada,
+            "reveladaEn": (
+                licencia.revelada_en.isoformat()
+                if licencia.revelada_en is not None
+                else None
+            ),
+            "reembolsable": not revelada,
+        }
+
+    @staticmethod
     def validar_propiedad_compra(
         compra: Optional[DespachoOrden], usuario_id: int
     ) -> DespachoOrden:
@@ -359,6 +376,21 @@ class LicenciaBibliotecaSalida(BaseModel):
 class RespuestaBibliotecaLicencias(BaseModel):
     message: str
     data: list[LicenciaBibliotecaSalida]
+    success: bool
+
+
+class EstadoLicenciaSalida(BaseModel):
+    licenciaId: str
+    juegoId: int
+    estado: str
+    revelada: bool
+    reveladaEn: Optional[str]
+    reembolsable: bool
+
+
+class RespuestaEstadoLicencias(BaseModel):
+    message: str
+    data: list[EstadoLicenciaSalida]
     success: bool
 
 

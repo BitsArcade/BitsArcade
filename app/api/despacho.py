@@ -15,6 +15,7 @@ from app.domain.despacho import (
     DatosDespachoCOM10,
     DatosDetalleCompraSalida,
     DatosElegibilidadEntrega,
+    EstadoLicenciaSalida,
     LicenciaBibliotecaSalida,
     RespuestaBibliotecaLicencias,
     RespuestaComprobanteCompra,
@@ -22,6 +23,7 @@ from app.domain.despacho import (
     RespuestaDetalleCompra,
     RespuestaElegibilidadEntrega,
     RespuestaRevelarClave,
+    RespuestaEstadoLicencias,
     SolicitudDespachoCOM10,
 )
 from app.repositories.repositorio_despacho import RepositorioDespacho
@@ -194,6 +196,46 @@ def listar_licencias_biblioteca(
         status_code=status.HTTP_200_OK,
         content={
             "message": "Biblioteca de licencias obtenida exitosamente",
+            "data": datos,
+            "success": True,
+        },
+    )
+
+
+@enrutador_biblioteca.get(
+    "/licencias/estado",
+    status_code=status.HTTP_200_OK,
+    response_model=RespuestaEstadoLicencias,
+    summary="Consultar estado de licencias (HU-49)",
+    description=(
+        "Consulta las licencias del cliente autenticado. El estado es ENTREGADA o "
+        "REVELADA según si la clave fue revelada; la elegibilidad de reembolso es "
+        "informativa y no ejecuta reembolsos."
+    ),
+    responses={
+        401: {"description": "Token inválido, expirado o ausente"},
+        503: {"description": "No fue posible consultar el estado de las licencias"},
+    },
+)
+def consultarEstadoLicencias(
+    usuario: UsuarioAutenticado = Depends(obtener_usuario_autenticado),
+    servicio: ServicioDespacho = Depends(obtener_servicio_despacho),
+):
+    resultado = servicio.consultarEstadoLicencias(usuarioId=usuario.id)
+    datos = [EstadoLicenciaSalida(**licencia).model_dump() for licencia in resultado]
+    if not datos:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "message": "No tienes licencias registradas",
+                "data": [],
+                "success": False,
+            },
+        )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": "Consulta de estado de licencias exitosa",
             "data": datos,
             "success": True,
         },

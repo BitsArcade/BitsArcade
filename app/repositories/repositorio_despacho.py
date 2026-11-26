@@ -204,7 +204,9 @@ class RepositorioDespacho:
             ) from error
 
     def listar_licencias_por_usuario(
-        self, usuario_id: int
+        self,
+        usuario_id: int,
+        mensajeErrorBd: str = "No fue posible consultar la biblioteca de licencias",
     ) -> list[LicenciaUsuario]:
         try:
             filas = (
@@ -218,9 +220,7 @@ class RepositorioDespacho:
             )
             return [self._a_entidad_licencia(fila) for fila in filas]
         except SQLAlchemyError as error:
-            raise ErrorAplicacion(
-                503, "No fue posible consultar la biblioteca de licencias"
-            ) from error
+            raise ErrorAplicacion(503, mensajeErrorBd) from error
 
     def obtener_reservas_y_keys_de_orden(
         self,
