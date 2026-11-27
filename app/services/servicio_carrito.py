@@ -50,22 +50,9 @@ class ClienteOrdenes:
     """Consulta de licencias en órdenes previas NO canceladas del usuario (RN-05), en MOD-04."""
 
     def contarLicenciasNoCanceladas(self, sesion: Session, usuarioId: int, juegoId: int) -> int:
-        """Suma las licencias del juego en las órdenes del usuario que no están CANCELADA (solo lectura)."""
-        from sqlalchemy import func
+        from app.repositories.repositorio_ordenes import RepositorioOrdenes
 
-        from app.domain.ordenes import ESTADO_ORDEN_CANCELADA, DetalleOrden, OrdenCompra
-
-        total = (
-            sesion.query(func.coalesce(func.sum(DetalleOrden.cantidad), 0))
-            .join(OrdenCompra, OrdenCompra.id == DetalleOrden.ordenId)
-            .filter(
-                OrdenCompra.usuarioId == usuarioId,
-                OrdenCompra.estado != ESTADO_ORDEN_CANCELADA,
-                DetalleOrden.juegoId == juegoId,
-            )
-            .scalar()
-        )
-        return int(total or 0)
+        return RepositorioOrdenes().contarLicenciasNoCanceladas(sesion, usuarioId, juegoId)
 
 
 class ServicioCarrito:

@@ -12,7 +12,7 @@ from app.api.usuarios import enrutadorUsuarios, enrutadorUsuariosInterno
 from app.api.catalogo import enrutadorCatalogo, enrutadorCatalogoInterno
 from app.api.inventario import enrutadorInventario, enrutadorInventarioInterno
 from app.api.carrito import enrutadorCarrito
-from app.api.ordenes import enrutador_ordenes, enrutador_ordenes_interno
+from app.api.ordenes import enrutadorOrdenes, enrutadorOrdenesInterno
 from app.core.respuestas import registrar_manejadores_errores
 from app.services.tareas_programadas import iniciarTareasProgramadas
 
@@ -33,8 +33,8 @@ app.include_router(enrutadorCatalogoInterno)
 app.include_router(enrutadorInventario)
 app.include_router(enrutadorInventarioInterno)
 app.include_router(enrutadorCarrito)
-app.include_router(enrutador_ordenes)
-app.include_router(enrutador_ordenes_interno)
+app.include_router(enrutadorOrdenes)
+app.include_router(enrutadorOrdenesInterno)
 
 registrar_manejadores_errores(app)
 
