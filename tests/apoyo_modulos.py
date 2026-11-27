@@ -34,3 +34,12 @@ def cargarClaves(sesion, juegoId=101, claves=("AAAAA-BBBBB-CCCCC",), plataforma=
 def reservar(sesion, ordenId=5001, juegoId=101, cantidad=1) -> list[str]:
     datos = ReservarClavesEntrada(ordenId=ordenId, juegoId=juegoId, cantidad=cantidad)
     return ServicioInventario().reservarClaves(sesion, datos)["data"]["reservaIds"]
+
+
+def agregarAlCarrito(cliente, usuarioId, juegoId, cantidad=1):
+    from tests.conftest import encabezadoAuth
+
+    respuesta = cliente.post("/api/v1/carrito/items", json={"juegoId": juegoId, "cantidad": cantidad},
+                             headers=encabezadoAuth(usuarioId))
+    assert respuesta.status_code in (200, 201), respuesta.json()
+    return respuesta
