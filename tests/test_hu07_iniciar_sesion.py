@@ -39,10 +39,10 @@ def test_cuentaSinConfirmarPuedeIniciarSesion(cliente, sesion):
 
 def test_error401MismoMensajeParaContrasenaOCorreoIncorrecto(cliente, sesion):
     crearUsuario(sesion)
-    claveMala = cliente.post(URL, json={"correo": "jugador@correo.com", "contrasena": "Otra#2026"})
+    contrasenaIncorrecta = cliente.post(URL, json={"correo": "jugador@correo.com", "contrasena": "Otra#2026"})
     correoMalo = cliente.post(URL, json={"correo": "nadie@correo.com", "contrasena": "Clave#2026"})
-    assert claveMala.status_code == correoMalo.status_code == 401
-    assert claveMala.json() == correoMalo.json() == {"message": "Credenciales inválidas", "data": None, "success": False}
+    assert contrasenaIncorrecta.status_code == correoMalo.status_code == 401
+    assert contrasenaIncorrecta.json() == correoMalo.json() == {"message": "Credenciales inválidas", "data": None, "success": False}
 
 
 def test_error503BaseDeDatos(cliente, monkeypatch):
