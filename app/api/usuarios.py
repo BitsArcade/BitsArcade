@@ -8,10 +8,12 @@ from app.core.seguridad import (
     obtenerUsuarioAutenticado,
 )
 from app.domain.usuarios import (
+    ActualizarPerfilEntrada,
     ConfirmacionSalida,
     ConfirmarRegistroEntrada,
     InicioSesionEntrada,
     InicioSesionSalida,
+    PerfilActualizadoSalida,
     PerfilSalida,
     RegistroEntrada,
     RegistroSalida,
@@ -87,3 +89,23 @@ def consultarPerfil(
 ):
     """HU-08: retorna el perfil del usuario del JWT, sin hash ni clave."""
     return servicioUsuarios.consultarPerfil(sesion, usuario)
+
+
+# ===== HU-09: Actualizar datos personales =====
+
+@enrutadorUsuarios.put(
+    "/perfil",
+    response_model=Respuesta[PerfilActualizadoSalida],
+    responses={
+        400: {"description": "El teléfono debe contener entre 7 y 15 dígitos"},
+        401: ERROR_401,
+        503: {"description": "No fue posible actualizar los datos personales"},
+    },
+)
+def actualizarDatosPersonales(
+    datos: ActualizarPerfilEntrada,
+    usuario: UsuarioAutenticado = Depends(obtenerUsuarioAutenticado),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-09: edita nombre y teléfono del usuario del JWT."""
+    return servicioUsuarios.actualizarPerfil(sesion, usuario, datos)

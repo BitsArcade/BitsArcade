@@ -23,6 +23,7 @@ from app.core.seguridad import (
 from app.domain.usuarios import (
     ESTADO_CONFIRMADA,
     TIPO_CODIGO_CONFIRMACION,
+    ActualizarPerfilEntrada,
     ConfirmarRegistroEntrada,
     InicioSesionEntrada,
     RegistroEntrada,
@@ -30,7 +31,9 @@ from app.domain.usuarios import (
     normalizarCorreo,
     validarContrasena,
     validarCorreo,
+    validarNombrePerfil,
     validarNombreRegistro,
+    validarTelefono,
 )
 from app.repositories.repositorio_usuarios import RepositorioUsuarios
 from app.services.cliente_notificaciones import (
@@ -163,4 +166,24 @@ class ServicioUsuarios:
                 "rol": usuario.rol,
                 "creadoEn": aIsoZ(usuario.creadoEn),
             },
+        )
+
+    # ===== HU-09: Actualizar datos personales =====
+
+    def actualizarPerfil(
+        self, sesion: Session, usuarioToken: UsuarioAutenticado, datos: ActualizarPerfilEntrada
+    ) -> dict:
+        """HU-09: actualiza nombre (2-80) y teléfono (opcional, 7-15 dígitos). Correo y rol no se editan."""
+        nombre = validarNombrePerfil(datos.nombre)
+        telefono = validarTelefono(datos.telefono)
+        with manejarErroresBd("No fue posible actualizar los datos personales"):
+            usuario = self.repositorio.obtenerPorId(sesion, usuarioToken.id)
+            if usuario is None:
+                raise ErrorAplicacion(404, "El usuario no existe")
+            usuario.nombre = nombre
+            usuario.telefono = telefono
+            self.repositorio.guardar(sesion, usuario)
+        return respuesta(
+            "Datos personales actualizados exitosamente",
+            {"usuarioId": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono},
         )
