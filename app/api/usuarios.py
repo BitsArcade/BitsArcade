@@ -3,11 +3,16 @@ from sqlalchemy.orm import Session
 
 from app.core.base_datos import obtenerSesionBd
 from app.core.respuestas import Respuesta
+from app.core.seguridad import (
+    UsuarioAutenticado,
+    obtenerUsuarioAutenticado,
+)
 from app.domain.usuarios import (
     ConfirmacionSalida,
     ConfirmarRegistroEntrada,
     InicioSesionEntrada,
     InicioSesionSalida,
+    PerfilSalida,
     RegistroEntrada,
     RegistroSalida,
 )
@@ -63,3 +68,22 @@ def confirmarCuenta(datos: ConfirmarRegistroEntrada, sesion: Session = Depends(o
 def iniciarSesion(datos: InicioSesionEntrada, sesion: Session = Depends(obtenerSesionBd)):
     """HU-07: valida credenciales y emite el JWT (sub, rol, cuentaConfirmada, iat, exp)."""
     return servicioUsuarios.iniciarSesion(sesion, datos)
+
+
+# ===== HU-08: Consultar perfil autenticado =====
+
+@enrutadorUsuarios.get(
+    "/perfil",
+    response_model=Respuesta[PerfilSalida],
+    responses={
+        401: ERROR_401,
+        404: {"description": "El usuario no existe"},
+        503: {"description": "No fue posible consultar el perfil"},
+    },
+)
+def consultarPerfil(
+    usuario: UsuarioAutenticado = Depends(obtenerUsuarioAutenticado),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-08: retorna el perfil del usuario del JWT, sin hash ni clave."""
+    return servicioUsuarios.consultarPerfil(sesion, usuario)

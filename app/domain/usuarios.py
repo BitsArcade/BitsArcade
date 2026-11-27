@@ -139,3 +139,14 @@ class InicioSesionSalida(BaseModel):
     tipo: str
     expiraEn: int
     cuentaConfirmada: bool
+
+
+# ===== HU-08: Consultar perfil autenticado =====
+
+class PerfilSalida(BaseModel):
+    usuarioId: int
+    correo: str
+    nombre: str
+    telefono: Optional[str] = None
+    rol: str
+    creadoEn: str
