@@ -6,6 +6,8 @@ from app.core.respuestas import Respuesta
 from app.domain.usuarios import (
     ConfirmacionSalida,
     ConfirmarRegistroEntrada,
+    InicioSesionEntrada,
+    InicioSesionSalida,
     RegistroEntrada,
     RegistroSalida,
 )
@@ -46,3 +48,18 @@ def registrarNuevoCliente(datos: RegistroEntrada, sesion: Session = Depends(obte
 def confirmarCuenta(datos: ConfirmarRegistroEntrada, sesion: Session = Depends(obtenerSesionBd)):
     """HU-06 (RN-12): confirma la cuenta con correo + código; pasa a CONFIRMADA."""
     return servicioUsuarios.confirmarRegistro(sesion, datos)
+
+
+# ===== HU-07: Iniciar sesión y generación de JWT =====
+
+@enrutadorUsuarios.post(
+    "/autenticacion/inicio-sesion",
+    response_model=Respuesta[InicioSesionSalida],
+    responses={
+        401: {"description": "Credenciales inválidas"},
+        503: {"description": "No fue posible iniciar sesión"},
+    },
+)
+def iniciarSesion(datos: InicioSesionEntrada, sesion: Session = Depends(obtenerSesionBd)):
+    """HU-07: valida credenciales y emite el JWT (sub, rol, cuentaConfirmada, iat, exp)."""
+    return servicioUsuarios.iniciarSesion(sesion, datos)

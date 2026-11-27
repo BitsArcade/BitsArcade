@@ -123,3 +123,19 @@ class ConfirmarRegistroEntrada(BaseModel):
 class ConfirmacionSalida(BaseModel):
     usuarioId: int
     cuentaConfirmada: bool
+
+
+# ===== HU-07: Iniciar sesión y generación de JWT =====
+
+class InicioSesionEntrada(BaseModel):
+    correo: Optional[str] = None
+    contrasena: Optional[str] = None
+
+    model_config = {"json_schema_extra": {"examples": [{"correo": "jugador@correo.com", "contrasena": "Clave#2026"}]}}
+
+
+class InicioSesionSalida(BaseModel):
+    token: str
+    tipo: str
+    expiraEn: int
+    cuentaConfirmada: bool
