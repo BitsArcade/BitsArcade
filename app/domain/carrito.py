@@ -2,7 +2,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 from sqlalchemy import Column, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship, synonym
+from sqlalchemy.orm import relationship
 
 from app.core.base_datos import Base
 from app.core.respuestas import ErrorAplicacion
@@ -122,10 +122,6 @@ class ItemCarrito(Base):
 
     carrito = relationship("Carrito", back_populates="items")
 
-    # Compatibilidad temporal: nombres anteriores usados por MOD-04 (órdenes) mientras migra.
-    carrito_id = synonym("carritoId")
-    juego_id = synonym("juegoId")
-
 
 # =====================================================================
 # 3. ESQUEMAS DE ENTRADA / SALIDA (Pydantic DTOs)
@@ -169,17 +165,3 @@ class DesgloseItemSalida(BaseModel):
     descuentoVolumen: float
     subtotal: float
     moneda: str
-
-
-# =====================================================================
-# Compatibilidad temporal con MOD-04 (órdenes, HU-31 a HU-33) mientras migra a la convención.
-# Reciben el contrato COM-11 con las claves anteriores (exists, status, ...).
-# =====================================================================
-
-def validar_juego_vendible(contrato_juego: dict) -> None:
-    validarJuegoVendible({"existe": contrato_juego.get("exists"), "estado": contrato_juego.get("status")})
-
-
-validar_limite_preventa = validarLimitePreventa
-validar_stock_suficiente = validarStockSuficiente
-calcular_desglose = calcularDesglose

@@ -3,7 +3,6 @@ from typing import Optional
 
 from pydantic import BaseModel
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import synonym
 
 from app.core.base_datos import Base
 from app.core.fechas import ahoraUtc
@@ -29,9 +28,6 @@ class ClaveLicencia(Base):
     claveCifrada = Column(Text, nullable=True)        # Fernet (reversible solo dentro de MOD-03/MOD-06)
     claveHash = Column(String(64), nullable=True)     # SHA-256 de la clave normalizada (solo unicidad)
     creadaEn = Column(DateTime, nullable=True, default=ahoraUtc)
-
-    # Compatibilidad temporal: nombre de atributo anterior usado por las órdenes (HU-31 a HU-33).
-    juego_id = synonym("juegoId")
 
 
 # ===== HU-11: Carga masiva de claves al vault =====
@@ -189,12 +185,3 @@ class AlertaAgotadaSalida(BaseModel):
     juegoId: int
     plataforma: Optional[str] = None
     alertaDesde: str
-
-
-# ===== Compatibilidad temporal =====
-# Nombres anteriores ("key") que aún usa el módulo de órdenes fusionado (HU-31 a HU-33).
-# Se retiran cuando ese módulo migre a la convención actualizada.
-ESTADO_KEY_DISPONIBLE = ESTADO_CLAVE_DISPONIBLE
-ESTADO_KEY_RESERVADA = ESTADO_CLAVE_RESERVADA
-ESTADO_KEY_VENDIDA = ESTADO_CLAVE_VENDIDA
-KeyLicencia = ClaveLicencia

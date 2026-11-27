@@ -103,7 +103,7 @@ def crearJuego(sesion):
 
 @pytest.fixture
 def crearClaves(sesion):
-    """Registra claves de inventario (modelo provisional de MOD-03 usado por COM-12)."""
+    """Registra claves de inventario de MOD-03 (`ClaveLicencia`), consultadas por COM-12."""
     from app.domain.inventario import ClaveLicencia
 
     def _crear(juegoId: int, disponibles: int = 0, estadoExtra: str | None = None, cantidadExtra: int = 0):

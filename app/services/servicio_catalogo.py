@@ -220,15 +220,3 @@ class ServicioCatalogo:
             "Consulta de stock exitosa",
             {"juegoId": juego.id, "estadoStock": determinarEstadoStock(disponibles)},
         )
-
-    # Compatibilidad temporal: COM-11 con las claves anteriores, usado por MOD-04 (órdenes, HU-31)
-    # mientras migra a la convención actualizada.
-    def obtener_contrato_com11(self, sesion: Session, juego_id: int) -> dict:
-        contrato = self.obtenerContratoCom11(sesion, juego_id)
-        return {
-            "exists": contrato["existe"],
-            "title": contrato["titulo"],
-            "status": contrato["estado"],
-            "finalPrice": contrato["precioFinal"],
-            "floorPrice": contrato["precioMinimo"],
-        }

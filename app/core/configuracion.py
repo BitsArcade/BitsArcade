@@ -35,26 +35,3 @@ class Configuracion(BaseSettings):
 
 
 configuracion = Configuracion()
-
-
-# ===== Compatibilidad temporal =====
-# Los módulos que aún no migran a la convención (MOD-00 y MOD-04 órdenes) leen `settings` con los
-# nombres anteriores en inglés y los porcentajes en decimal (0.19). Se conserva hasta que migren.
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-
-    APP_NAME: str = "BitArcade Backend API"
-    APP_ENV: str = "development"
-    APP_DEBUG: bool = True
-    APP_PORT: int = 8000
-    DATABASE_URL: str = "sqlite:///./dev.db"
-    SECRET_KEY: str = "cambiar-en-env"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-
-    # Parámetros financieros globales (MOD-00)
-    TAX_RATE: float = 0.19
-    DEFAULT_MARGIN: float = 0.25
-    DEFAULT_CURRENCY: str = "COP"
-
-
-settings = Settings()
