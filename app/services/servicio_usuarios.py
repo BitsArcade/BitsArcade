@@ -7,13 +7,19 @@ import bcrypt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.fechas import ahoraUtc
+from app.core.fechas import (
+    aIsoZ,
+    ahoraUtc,
+)
 from app.core.respuestas import (
     ErrorAplicacion,
     manejarErroresBd,
     respuesta,
 )
-from app.core.seguridad import emitirToken
+from app.core.seguridad import (
+    UsuarioAutenticado,
+    emitirToken,
+)
 from app.domain.usuarios import (
     ESTADO_CONFIRMADA,
     TIPO_CODIGO_CONFIRMACION,
@@ -137,4 +143,24 @@ class ServicioUsuarios:
         return respuesta(
             "Inicio de sesión exitoso",
             {"token": token, "tipo": "Bearer", "expiraEn": segundos, "cuentaConfirmada": cuentaConfirmada},
+        )
+
+    # ===== HU-08: Consultar perfil autenticado =====
+
+    def consultarPerfil(self, sesion: Session, usuarioToken: UsuarioAutenticado) -> dict:
+        """HU-08: el usuarioId sale del token; nunca se retorna el hash de la clave."""
+        with manejarErroresBd("No fue posible consultar el perfil"):
+            usuario = self.repositorio.obtenerPorId(sesion, usuarioToken.id)
+        if usuario is None:
+            raise ErrorAplicacion(404, "El usuario no existe")
+        return respuesta(
+            "Consulta de perfil exitosa",
+            {
+                "usuarioId": usuario.id,
+                "correo": usuario.correo,
+                "nombre": usuario.nombre,
+                "telefono": usuario.telefono,
+                "rol": usuario.rol,
+                "creadoEn": aIsoZ(usuario.creadoEn),
+            },
         )
