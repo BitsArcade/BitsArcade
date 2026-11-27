@@ -17,7 +17,7 @@ def test_flujoExitosoSinDatosSensibles(cliente, sesion):
     assert set(cuerpo["data"]) == {"usuarioId", "correo", "nombre", "telefono", "rol", "creadoEn"}
     assert cuerpo["data"]["usuarioId"] == usuario.id and cuerpo["data"]["telefono"] is None
     assert cuerpo["data"]["creadoEn"].endswith("Z")
-    assert "contrasena" not in respuesta.text.lower().replace("clave_", "")
+    assert "contrasena" not in respuesta.text.lower()
 
 
 def test_usuarioIdSaleDelToken(cliente, sesion):
