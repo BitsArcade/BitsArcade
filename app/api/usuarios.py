@@ -97,7 +97,7 @@ def consultarPerfil(
     usuario: UsuarioAutenticado = Depends(obtenerUsuarioAutenticado),
     sesion: Session = Depends(obtenerSesionBd),
 ):
-    """HU-08: retorna el perfil del usuario del JWT, sin hash ni clave."""
+    """HU-08: retorna el perfil del usuario del JWT, sin hash de contraseña."""
     return servicioUsuarios.consultarPerfil(sesion, usuario)
 
 
@@ -142,7 +142,7 @@ def solicitarRecuperacion(datos: SolicitarRecuperacionEntrada, sesion: Session =
     },
 )
 def confirmarRecuperacion(datos: ConfirmarRecuperacionEntrada, sesion: Session = Depends(obtenerSesionBd)):
-    """HU-10: valida el código (15 min, un uso, máx. 5 intentos) y actualiza el hash de la clave."""
+    """HU-10: valida el código (15 min, un uso, máx. 5 intentos) y actualiza el hash de la contraseña."""
     return servicioUsuarios.confirmarRecuperacion(sesion, datos)
 
 
