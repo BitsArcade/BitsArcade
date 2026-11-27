@@ -186,3 +186,28 @@ class PerfilActualizadoSalida(BaseModel):
     usuarioId: int
     nombre: str
     telefono: Optional[str] = None
+
+
+# ===== HU-10: Restablecer contraseña mediante código =====
+
+MENSAJE_CODIGO_INVALIDO = "El código es inválido o expiró"
+
+
+class SolicitarRecuperacionEntrada(BaseModel):
+    correo: Optional[str] = None
+
+
+class EstadoEnvioSalida(BaseModel):
+    estadoEnvio: str
+
+
+class ConfirmarRecuperacionEntrada(BaseModel):
+    correo: Optional[str] = None
+    codigo: Optional[str] = None
+    nuevaContrasena: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"correo": "jugador@correo.com", "codigo": "482915", "nuevaContrasena": "NuevaClave#2026"}]
+        }
+    }

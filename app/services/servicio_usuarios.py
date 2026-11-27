@@ -22,11 +22,15 @@ from app.core.seguridad import (
 )
 from app.domain.usuarios import (
     ESTADO_CONFIRMADA,
+    MENSAJE_CODIGO_INVALIDO,
     TIPO_CODIGO_CONFIRMACION,
+    TIPO_CODIGO_RECUPERACION,
     ActualizarPerfilEntrada,
+    ConfirmarRecuperacionEntrada,
     ConfirmarRegistroEntrada,
     InicioSesionEntrada,
     RegistroEntrada,
+    SolicitarRecuperacionEntrada,
     codigoVigente,
     normalizarCorreo,
     validarContrasena,
@@ -187,3 +191,31 @@ class ServicioUsuarios:
             "Datos personales actualizados exitosamente",
             {"usuarioId": usuario.id, "nombre": usuario.nombre, "telefono": usuario.telefono},
         )
+
+    # ===== HU-10: Restablecer contraseña mediante código =====
+
+    def solicitarRecuperacion(self, sesion: Session, datos: SolicitarRecuperacionEntrada) -> dict:
+        """HU-10: responde siempre igual, exista o no el correo (sin enumeración de usuarios)."""
+        with manejarErroresBd("No fue posible procesar la recuperación de contraseña"):
+            usuario = self.repositorio.obtenerPorCorreo(sesion, normalizarCorreo(datos.correo))
+            if usuario is not None:
+                codigo = generarCodigo()
+                self.repositorio.crearCodigo(sesion, usuario.id, TIPO_CODIGO_RECUPERACION, hashCodigo(codigo))
+                self._enviarCodigo(usuario.correo, "RECUPERACION_CLAVE", codigo)
+        return respuesta(
+            "Si el correo está registrado, se envió un código de recuperación",
+            {"estadoEnvio": "SIMULADO"},
+        )
+
+    def confirmarRecuperacion(self, sesion: Session, datos: ConfirmarRecuperacionEntrada) -> dict:
+        """HU-10: código de 15 minutos, un solo uso y máximo 5 intentos; la nueva clave cumple HU-06."""
+        nuevaContrasena = validarContrasena(datos.nuevaContrasena)
+        with manejarErroresBd("No fue posible procesar la recuperación de contraseña"):
+            usuario = self.repositorio.obtenerPorCorreo(sesion, normalizarCorreo(datos.correo))
+            registroCodigo = self._validarCodigo(
+                sesion, usuario, TIPO_CODIGO_RECUPERACION, datos.codigo, MENSAJE_CODIGO_INVALIDO
+            )
+            registroCodigo.usado = True
+            usuario.contrasenaHash = generarHashContrasena(nuevaContrasena)
+            self.repositorio.guardar(sesion, usuario, registroCodigo)
+        return respuesta("Contraseña actualizada exitosamente", None)
