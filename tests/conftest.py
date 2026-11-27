@@ -132,10 +132,13 @@ def encabezadoAuth(usuarioId: int = 1, **kwargs) -> dict:
 
 
 def configurarParametros(cliente, tasaIva: float | None = None, margenGanancia: float | None = None) -> None:
-    """Actualiza los parámetros financieros de MOD-00 por sus endpoints (HU-03 / HU-04). Porcentajes 0-100."""
+    """Actualiza los parámetros financieros de MOD-00 por sus endpoints (HU-03 / HU-04), como ADMIN."""
+    admin = encabezadoAuth(1, rol="ADMIN")
     if tasaIva is not None:
-        respuesta = cliente.put("/api/v1/parametros/impuesto-iva", json={"tasa_iva": tasaIva})
+        # El IVA es el primer impuesto sembrado por TT-02 (impuestoId = 1)
+        respuesta = cliente.put("/api/v1/parametrizacion/impuestos/1", json={"tasaIva": tasaIva}, headers=admin)
         assert respuesta.status_code == 200, respuesta.json()
     if margenGanancia is not None:
-        respuesta = cliente.put("/api/v1/parametros/margen-ganancia", json={"margen_ganancia": margenGanancia})
+        respuesta = cliente.put("/api/v1/parametrizacion/margenes/ganancia", json={"margenGanancia": margenGanancia},
+                                headers=admin)
         assert respuesta.status_code == 200, respuesta.json()

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from app.core.configuracion import settings
 from app.core.base_datos import engine, Base
 from app.domain import parametros as modelos_parametros
-from app.api.parametros import enrutador_parametros, enrutador_interno
+from app.api.parametros import enrutadorParametros, enrutadorParametrosInterno
 from app.domain import usuarios as modelosUsuarios
 from app.domain import catalogo as modelos_catalogo
 from app.domain import inventario as modelos_inventario
@@ -24,8 +24,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-app.include_router(enrutador_parametros)
-app.include_router(enrutador_interno)
+app.include_router(enrutadorParametros)
+app.include_router(enrutadorParametrosInterno)
 app.include_router(enrutadorUsuarios)
 app.include_router(enrutadorUsuariosInterno)
 app.include_router(enrutadorCatalogo)

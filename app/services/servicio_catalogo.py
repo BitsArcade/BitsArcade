@@ -41,18 +41,8 @@ class ClienteParametrosFinancieros:
         self.servicioParametros = servicioParametros or ServicioParametros()
 
     def obtenerContratoCom01(self, sesion: Session) -> dict:
-        """
-        Lee COM-01 de MOD-00 y lo entrega en porcentaje (0-100). Si MOD-00 aún expone el contrato
-        anterior (`obtener_contrato_com01`, en decimal: taxRate=0.19), se convierte a porcentaje.
-        """
-        servicio = self.servicioParametros
-        if hasattr(servicio, "obtenerContratoCom01"):
-            return servicio.obtenerContratoCom01(sesion)
-        contrato = servicio.obtener_contrato_com01(sesion)
-        return {
-            "tasaIva": round(float(contrato["taxRate"]) * 100, 4),
-            "margenGanancia": round(float(contrato["margin"]) * 100, 4),
-        }
+        """Lee COM-01 de MOD-00: tasaIva y margenGanancia en porcentaje (0-100)."""
+        return self.servicioParametros.obtenerContratoCom01(sesion)
 
     def obtener(self, sesion: Session) -> dict:
         try:

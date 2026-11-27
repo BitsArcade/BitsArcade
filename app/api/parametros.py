@@ -1,100 +1,92 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from app.core.base_datos import get_db
+
+from app.core.base_datos import obtenerSesionBd
+from app.core.fechas import aIsoZ
+from app.core.respuestas import Respuesta, manejarErroresBd, respuesta
+from app.core.seguridad import UsuarioAutenticado, obtenerUsuarioAdmin, validarTokenServicio
 from app.domain.parametros import (
-    CrearMonedaEntrada,
-    MonedaSalida,
     ActualizarIvaEntrada,
     ActualizarMargenEntrada,
-    CrearMetodoPagoEntrada,
-    MetodoPagoSalida
+    CrearMonedaEntrada,
+    ImpuestoSalida,
+    MargenSalida,
+    MetodoPagoSalida,
+    MonedaResumenSalida,
+    MonedaSalida,
+    ParametrosFinancierosSalida,
+    TasaCambioSalida,
 )
 from app.services.servicio_parametros import ServicioParametros
 
-enrutador_parametros = APIRouter(
-    prefix="/api/v1/parametros",
-    tags=["MOD-00: Parametrización (HU-01 a HU-05)"]
+enrutadorParametros = APIRouter(prefix="/api/v1/parametrizacion", tags=["MOD-00: Parametrización (HU-01 a HU-05)"])
+enrutadorParametrosInterno = APIRouter(
+    prefix="/interno/v1/parametrizacion",
+    tags=["MOD-00: Contratos internos (COM-01 a COM-03)"],
+    dependencies=[Depends(validarTokenServicio)],
 )
-
-enrutador_interno = APIRouter(
-    prefix="/internal/v1/parametros",
-    tags=["Contratos Internos MOD-00 (COM-01 a COM-03)"]
-)
-
-servicio = ServicioParametros()
-
-# =====================================================================
-# HISTORIAS DE USUARIO DEL SPRINT-00 (HU-01 a HU-05)
-# =====================================================================
-
-@enrutador_parametros.post("/monedas", response_model=MonedaSalida, status_code=status.HTTP_201_CREATED)
-def registrar_nueva_moneda(datos: CrearMonedaEntrada, sesion: Session = Depends(get_db)):
-    """HU-01 (FUN-00.1.1 / PRO-00.1.1): Registrar nueva moneda habilitada."""
-    return servicio.registrar_moneda(sesion, datos)
+servicioParametros = ServicioParametros()
 
 
-@enrutador_parametros.get("/monedas", response_model=list[MonedaSalida])
-def consultar_monedas_habilitadas(sesion: Session = Depends(get_db)):
-    """HU-02 (FUN-00.1.2 / PRO-00.1.2): Consultar monedas actualmente activas."""
-    servicio.inicializar_datos_por_defecto(sesion)
-    return servicio.consultar_monedas_habilitadas(sesion)
+@enrutadorParametros.post("/monedas", status_code=201, response_model=Respuesta[MonedaSalida])
+def registrarMoneda(
+    datos: CrearMonedaEntrada,
+    _admin: UsuarioAutenticado = Depends(obtenerUsuarioAdmin),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-01: registra una moneda ISO 4217 en estado ACTIVO (sin tasa de cambio)."""
+    return servicioParametros.registrarMoneda(sesion, datos)
 
 
-@enrutador_parametros.put("/impuesto-iva")
-def actualizar_tasa_iva(datos: ActualizarIvaEntrada, sesion: Session = Depends(get_db)):
-    """HU-03 (FUN-00.1.3 / PRO-00.1.3): Actualizar porcentaje de impuesto IVA (0 a 100)."""
-    configuracion = servicio.actualizar_tasa_iva(sesion, datos.tasa_iva)
-    return {
-        "mensaje": "Tasa de impuesto IVA actualizada correctamente.",
-        "tasa_iva_porcentaje": configuracion.tasa_iva
-    }
+@enrutadorParametros.get("/monedas", response_model=Respuesta[list[MonedaResumenSalida]])
+def consultarMonedas(
+    estado: str | None = Query(default="ACTIVO", description="ACTIVO o INACTIVO"),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-02: lista pública de monedas por estado (por defecto ACTIVO), sin tasas de cambio."""
+    return servicioParametros.consultarMonedas(sesion, estado)
 
 
-@enrutador_parametros.put("/margen-ganancia")
-def configurar_margen_ganancia(datos: ActualizarMargenEntrada, sesion: Session = Depends(get_db)):
-    """HU-04 (FUN-00.1.4 / PRO-00.1.4): Configurar margen de ganancia / markup (> 0)."""
-    configuracion = servicio.configurar_margen_ganancia(sesion, datos.margen_ganancia)
-    return {
-        "mensaje": "Margen comercial (markup) actualizado correctamente.",
-        "margen_ganancia_porcentaje": configuracion.margen_ganancia
-    }
+@enrutadorParametros.put("/impuestos/{impuestoId}", response_model=Respuesta[ImpuestoSalida])
+def actualizarTasaIva(
+    impuestoId: int,
+    datos: ActualizarIvaEntrada,
+    _admin: UsuarioAutenticado = Depends(obtenerUsuarioAdmin),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-03: actualiza el porcentaje global de IVA (0 a 100)."""
+    return servicioParametros.actualizarTasaIva(sesion, impuestoId, datos.tasaIva)
 
 
-@enrutador_parametros.get("/metodos-pago", response_model=list[MetodoPagoSalida])
-def listar_metodos_de_pago(sesion: Session = Depends(get_db)):
-    """Consulta el listado de métodos de pago y su estado (Activo/Inactivo)."""
-    return servicio.listar_metodos_pago(sesion)
+@enrutadorParametros.put("/margenes/ganancia", response_model=Respuesta[MargenSalida])
+def configurarMargenGanancia(
+    datos: ActualizarMargenEntrada,
+    _admin: UsuarioAutenticado = Depends(obtenerUsuarioAdmin),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-04: fija el porcentaje global de margen de ganancia (> 0)."""
+    return servicioParametros.configurarMargenGanancia(sesion, datos.margenGanancia)
 
 
-@enrutador_parametros.post("/metodos-pago", response_model=MetodoPagoSalida, status_code=status.HTTP_201_CREATED)
-def registrar_metodo_de_pago(datos: CrearMetodoPagoEntrada, sesion: Session = Depends(get_db)):
-    """Endpoint auxiliar para registrar métodos de pago adicionales."""
-    return servicio.crear_metodo_pago(sesion, datos)
+@enrutadorParametros.patch("/metodos-pago/{metodoPagoId}/inactivar", response_model=Respuesta[MetodoPagoSalida])
+def inactivarMetodoPago(
+    metodoPagoId: int,
+    _admin: UsuarioAutenticado = Depends(obtenerUsuarioAdmin),
+    sesion: Session = Depends(obtenerSesionBd),
+):
+    """HU-05: inactivación lógica de un método de pago (no se elimina el registro)."""
+    return servicioParametros.inactivarMetodoPago(sesion, metodoPagoId)
 
 
-@enrutador_parametros.patch("/metodos-pago/{metodo_id}/inactivar", response_model=MetodoPagoSalida)
-def inactivar_metodo_de_pago(metodo_id: int, sesion: Session = Depends(get_db)):
-    """HU-05 (FUN-00.1.5 / PRO-00.1.5): Inactivar método de pago mediante borrado lógico."""
-    return servicio.inactivar_metodo_pago(sesion, metodo_id)
+@enrutadorParametrosInterno.get("/financieros", response_model=Respuesta[ParametrosFinancierosSalida])
+def obtenerParametrosFinancieros(sesion: Session = Depends(obtenerSesionBd)):
+    """COM-01 / COM-02: {tasaIva, margenGanancia, monedaBase} en porcentaje 0-100."""
+    with manejarErroresBd("No fue posible obtener los parámetros financieros"):
+        return respuesta("Parámetros financieros vigentes", servicioParametros.obtenerContratoCom01(sesion))
 
 
-# =====================================================================
-# CONTRATOS INTERNOS DE INTEROPERABILIDAD (Tabla 10 del Informe)
-# =====================================================================
-
-@enrutador_interno.get("/financieros")
-def obtener_parametros_financieros_com01(sesion: Session = Depends(get_db)):
-    """COM-01: Entrega {taxRate, margin} al módulo MOD-02 (Catálogo de Juegos)."""
-    return servicio.obtener_contrato_com01(sesion)
-
-
-@enrutador_interno.get("/orden-config")
-def obtener_configuracion_orden_com02(sesion: Session = Depends(get_db)):
-    """COM-02: Entrega {taxRate, currency} al módulo MOD-04 (Carrito y Órdenes)."""
-    return servicio.obtener_contrato_com02(sesion)
-
-
-@enrutador_interno.get("/tasa-cambio/{moneda_iso}")
-def obtener_tasa_cambio_com03(moneda_iso: str, sesion: Session = Depends(get_db)):
-    """COM-03: Entrega {currency, exchangeRate} al módulo MOD-05 (Transacciones y Pagos)."""
-    return servicio.obtener_contrato_com03(sesion, moneda_iso)
+@enrutadorParametrosInterno.get("/tasa-cambio/{codigoIso}", response_model=Respuesta[TasaCambioSalida])
+def obtenerTasaCambio(codigoIso: str, sesion: Session = Depends(obtenerSesionBd)):
+    """COM-03: tasa vigente en COP por 1 unidad de la moneda (consulta la API externa de Divisas)."""
+    tasa = servicioParametros.obtenerContratoCom03(sesion, codigoIso)
+    return respuesta("Tasa de cambio vigente", {**tasa, "consultadaEn": aIsoZ(tasa["consultadaEn"])})
