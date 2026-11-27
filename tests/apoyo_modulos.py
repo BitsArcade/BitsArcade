@@ -1,21 +1,26 @@
 """
-Utilidades de prueba compartidas por las HU de MOD-01, MOD-03 y MOD-04.
+Utilidades de prueba compartidas por las HU de MOD-01, MOD-03, MOD-05 y MOD-06.
 """
+import json
 from datetime import timedelta
 
 import bcrypt
 
+from app.core.configuracion import configuracion
 from app.core.seguridad import encabezadosServicio
 from app.core.fechas import ahoraUtc
 from app.domain.inventario import CargaLoteEntrada, ReservarClavesEntrada
 from app.domain.ordenes import LineaOrden, Orden, ReservaOrden
+from app.domain.pagos import calcularFirma
 from app.domain.usuarios import ESTADO_CONFIRMADA, Usuario
 from app.services.cliente_notificaciones import ENVIOS_SIMULADOS
+from app.services.cliente_pasarela import COBROS_SIMULADOS
 from app.services.servicio_inventario import ServicioInventario
 
 
 def limpiarSimulaciones() -> None:
     ENVIOS_SIMULADOS.clear()
+    COBROS_SIMULADOS.clear()
 
 
 def crearUsuario(sesion, correo="jugador@correo.com", contrasena="Clave#2026", nombre="Ana Pérez",
@@ -82,6 +87,12 @@ def obtenerOrden(sesion, ordenId=5001) -> Orden:
 def encabezadosInternos(modulo="MOD-05") -> dict:
     """Token de servicio exigido por las rutas /interno/v1."""
     return encabezadosServicio(modulo)
+
+
+def cuerpoFirmado(datos: dict, secreto: str | None = None) -> tuple[bytes, dict]:
+    cuerpo = json.dumps(datos).encode("utf-8")
+    firma = calcularFirma(cuerpo, secreto or configuracion.SECRETO_PASARELA)
+    return cuerpo, {"X-Signature": firma, "Content-Type": "application/json"}
 
 
 def despacharOrden(cliente, sesion, usuarioId, ordenId=5001, claves=("AAAAA-BBBBB-CCCCC",), juegoId=101,
