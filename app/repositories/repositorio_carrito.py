@@ -71,7 +71,3 @@ class RepositorioCarrito:
         sesion.commit()
         sesion.refresh(carrito)
         return carrito
-
-    # Compatibilidad temporal: nombre anterior usado por MOD-04 (órdenes, HU-31) mientras migra.
-    def obtener_carrito_activo(self, sesion: Session, usuario_id: int) -> Carrito | None:
-        return self.obtenerCarritoActivo(sesion, usuario_id)

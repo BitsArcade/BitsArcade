@@ -32,15 +32,6 @@ class ErrorAplicacion(Exception):
         self.codigoHttp = codigoHttp
         self.mensaje = mensaje
 
-    # Compatibilidad temporal: nombres anteriores de los atributos.
-    @property
-    def status_code(self) -> int:
-        return self.codigoHttp
-
-    @property
-    def message(self) -> str:
-        return self.mensaje
-
 
 def respuesta(message: str, data: Any, success: bool = True) -> dict:
     """Construye el cuerpo estándar de respuesta."""
@@ -87,8 +78,3 @@ def registrarManejadoresErrores(app: FastAPI) -> None:
     """Registra el manejador del contrato de error estándar en la aplicación."""
     app.add_exception_handler(ErrorAplicacion, _manejarErrorAplicacion)
     app.add_exception_handler(RequestValidationError, _manejarErrorValidacion)
-
-
-# ===== Compatibilidad temporal con los módulos que aún usan los nombres anteriores =====
-manejar_errores_bd = manejarErroresBd
-registrar_manejadores_errores = registrarManejadoresErrores

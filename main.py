@@ -1,15 +1,26 @@
+"""
+BitArcade - Backend (FastAPI). Arquitectura por capas: api / services / domain / repositories / core.
+
+Prefijos: /api/v1 (público y clientes), /interno/v1 (contratos entre módulos, token de servicio)
+y /externo/v1 (servicios externos simulados).
+"""
 from fastapi import FastAPI
-from app.core.configuracion import settings
-from app.core.base_datos import engine, Base
-from app.domain import parametros as modelos_parametros
+
+from app.core.base_datos import Base, motor
+from app.core.configuracion import configuracion
+from app.core.respuestas import registrarManejadoresErrores
+
+# Modelos (registran sus tablas en Base.metadata)
+from app.domain import parametros as modelosParametros  # noqa: F401
+from app.domain import usuarios as modelosUsuarios  # noqa: F401
+from app.domain import catalogo as modelosCatalogo  # noqa: F401
+from app.domain import inventario as modelosInventario  # noqa: F401
+from app.domain import carrito as modelosCarrito  # noqa: F401
+from app.domain import ordenes as modelosOrdenes  # noqa: F401
+from app.domain import pagos as modelosPagos  # noqa: F401
+from app.domain import despacho as modelosDespacho  # noqa: F401
+
 from app.api.parametros import enrutadorParametros, enrutadorParametrosInterno
-from app.domain import usuarios as modelosUsuarios
-from app.domain import catalogo as modelos_catalogo
-from app.domain import inventario as modelos_inventario
-from app.domain import carrito as modelos_carrito
-from app.domain import ordenes as modelos_ordenes
-from app.domain import pagos as modelosPagos
-from app.domain import despacho as modelosDespacho
 from app.api.usuarios import enrutadorUsuarios, enrutadorUsuariosInterno
 from app.api.catalogo import enrutadorCatalogo, enrutadorCatalogoInterno
 from app.api.inventario import enrutadorInventario, enrutadorInventarioInterno
@@ -19,55 +30,54 @@ from app.api.pagos import enrutadorPagos
 from app.api.despacho import enrutadorDespachoInterno
 from app.api.biblioteca import enrutadorBiblioteca
 from app.api.notificaciones_simuladas import enrutadorNotificacionesExternas
-from app.core.respuestas import registrar_manejadores_errores
 from app.services.tareas_programadas import iniciarTareasProgramadas
 
-Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=motor)
 
 app = FastAPI(
-    title=settings.APP_NAME,
-    description="Backend oficial de BitArcade - Arquitectura de 5 capas (API, Service, Domain, Repository, DB).",
-    version="1.0.0"
+    title=configuracion.NOMBRE_APLICACION,
+    description="Backend oficial de BitArcade - Arquitectura por capas (API, Servicio, Dominio, Repositorio, BD).",
+    version="1.0.0",
 )
 
-app.include_router(enrutadorParametros)
-app.include_router(enrutadorParametrosInterno)
-app.include_router(enrutadorUsuarios)
-app.include_router(enrutadorUsuariosInterno)
-app.include_router(enrutadorCatalogo)
-app.include_router(enrutadorCatalogoInterno)
-app.include_router(enrutadorInventario)
-app.include_router(enrutadorInventarioInterno)
-app.include_router(enrutadorCarrito)
-app.include_router(enrutadorOrdenes)
-app.include_router(enrutadorOrdenesInterno)
-app.include_router(enrutadorPagos)
-app.include_router(enrutadorDespachoInterno)
-app.include_router(enrutadorBiblioteca)
-app.include_router(enrutadorNotificacionesExternas)
+for enrutador in (
+    enrutadorParametros,
+    enrutadorParametrosInterno,
+    enrutadorUsuarios,
+    enrutadorUsuariosInterno,
+    enrutadorCatalogo,
+    enrutadorCatalogoInterno,
+    enrutadorInventario,
+    enrutadorInventarioInterno,
+    enrutadorCarrito,
+    enrutadorOrdenes,
+    enrutadorOrdenesInterno,
+    enrutadorPagos,
+    enrutadorDespachoInterno,
+    enrutadorBiblioteca,
+    enrutadorNotificacionesExternas,
+):
+    app.include_router(enrutador)
 
-registrar_manejadores_errores(app)
+registrarManejadoresErrores(app)
 
-# TT-04 (HU-13 / HU-15): tareas periódicas de inventario (reservas vencidas y alertas de stock).
+# TT-04 / HU-34: tareas periódicas (reservas vencidas, alertas de stock y órdenes expiradas).
 # Solo arrancan si la variable de entorno INTERVALO_TAREAS_SEGUNDOS es mayor que 0.
 iniciarTareasProgramadas()
 
+
 @app.get("/", tags=["General"])
-def leer_raiz():
+def leerRaiz():
     """Endpoint raíz de bienvenida al sistema BitArcade."""
     return {
-        "sistema": settings.APP_NAME,
-        "entorno": settings.APP_ENV,
+        "sistema": configuracion.NOMBRE_APLICACION,
+        "entorno": configuracion.ENTORNO,
         "version": "1.0.0",
-        "documentacion_swagger": "/docs"
+        "documentacion": "/docs",
     }
 
-@app.get("/health", tags=["Monitoreo"])
-def verificar_salud():
-    """Endpoint de verificación de salud (Health Check) del microservicio."""
-    return {
-        "status": "healthy",
-        "service": settings.APP_NAME,
-        "environment": settings.APP_ENV,
-        "database_configured": bool(settings.DATABASE_URL)
-    }
+
+@app.get("/salud", tags=["Monitoreo"])
+def verificarSalud():
+    """Verificación de salud del servicio."""
+    return {"estado": "ACTIVO", "servicio": configuracion.NOMBRE_APLICACION, "entorno": configuracion.ENTORNO}

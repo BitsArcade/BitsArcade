@@ -21,10 +21,3 @@ def obtenerSesionBd():
         yield sesionBd
     finally:
         sesionBd.close()
-
-# ===== Compatibilidad temporal con los módulos que aún usan los nombres anteriores =====
-# `get_db` es el MISMO objeto que `obtenerSesionBd`, así una sola sobreescritura de dependencia
-# (pruebas) aplica a ambos.
-engine = motor
-SessionLocal = SesionLocal
-get_db = obtenerSesionBd

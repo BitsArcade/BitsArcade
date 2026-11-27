@@ -116,9 +116,3 @@ def validarTokenServicio(
 def encabezadosServicio(modulo: str) -> dict:
     """Encabezados que un módulo envía al invocar un contrato interno de otro módulo."""
     return {ENCABEZADO_TOKEN_SERVICIO: configuracion.TOKEN_SERVICIO, ENCABEZADO_MODULO_SOLICITANTE: modulo}
-
-
-# ===== Compatibilidad temporal con los módulos que aún usan los nombres anteriores =====
-esquema_bearer = esquemaBearer
-decodificar_token = decodificarToken
-obtener_usuario_autenticado = obtenerUsuarioAutenticado
