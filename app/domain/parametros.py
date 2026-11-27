@@ -1,91 +1,184 @@
-from sqlalchemy import Column, Integer, String, Float
-from pydantic import BaseModel, Field, field_validator
+"""
+MOD-00: Parametrización (HU-01 a HU-05) y contratos COM-01 / COM-02 / COM-03.
+
+Reglas generales:
+- La moneda base es COP (TT-02). La entidad Moneda NO guarda tasas de cambio: la tasa se consulta
+  en tiempo real a la API externa de Divisas (COM-03) solo cuando la moneda de cobro no es COP.
+- tasaIva y margenGanancia se guardan como porcentaje de 0 a 100 (19 = 19 %). La conversión a
+  decimal se hace únicamente con `porcentajeADecimal` (dominio), sin crear otro nombre de campo.
+- Estados en MAYÚSCULAS: ACTIVO / INACTIVO.
+"""
+import re
+from typing import Any, Optional
+
+from pydantic import BaseModel
+from sqlalchemy import Column, DateTime, Float, Integer, String
+
 from app.core.base_datos import Base
+from app.core.fechas import ahoraUtc
+from app.core.respuestas import ErrorAplicacion
+
+ESTADO_ACTIVO = "ACTIVO"
+ESTADO_INACTIVO = "INACTIVO"
+ESTADOS_VALIDOS = (ESTADO_ACTIVO, ESTADO_INACTIVO)
+MONEDA_BASE = "COP"
+NOMBRE_IMPUESTO_IVA = "IVA"
+PARAMETRO_MARGEN_GANANCIA = "MARGEN_GANANCIA"
+PATRON_CODIGO_ISO = re.compile(r"^[A-Z]{3}$")
+
+MENSAJE_CODIGO_ISO_INVALIDO = "Código ISO inválido. Debe tener 3 letras mayúsculas (ISO 4217)"
+MENSAJE_NOMBRE_OBLIGATORIO = "El nombre de la moneda es obligatorio"
+MENSAJE_FILTRO_ESTADO_INVALIDO = "El valor del filtro estado no es válido. Use ACTIVO o INACTIVO"
+MENSAJE_TASA_IVA_INVALIDA = "La tasa de IVA debe estar entre 0 y 100"
+MENSAJE_MARGEN_INVALIDO = "El margen de ganancia debe ser mayor a 0"
+
 
 # =====================================================================
-# 1. ENTIDADES DE DOMINIO (Mapeo de tablas para SQLite)
+# Entidades
 # =====================================================================
 
 class Moneda(Base):
-    """Representa las monedas aceptadas en BitArcade (HU-01, HU-02)."""
+    """HU-01 / HU-02: moneda ISO 4217 habilitada (sin campos de tasa de cambio)."""
     __tablename__ = "monedas"
 
     id = Column(Integer, primary_key=True, index=True)
-    codigo_iso = Column(String(3), unique=True, index=True, nullable=False)
-    nombre = Column(String(50), nullable=False)
-    tasa_cambio_usd = Column(Float, nullable=False, default=1.0)
-    estado = Column(String(20), nullable=False, default="Activo")
+    nombre = Column(String(80), nullable=False)
+    codigoIso = Column(String(3), unique=True, index=True, nullable=False)
+    estado = Column(String(20), nullable=False, default=ESTADO_ACTIVO)
 
 
-class ConfiguracionFinanciera(Base):
-    """Centraliza IVA, margen de ganancia (markup) y moneda base (HU-03, HU-04, COM-01, COM-02)."""
-    __tablename__ = "configuracion_financiera"
+class Impuesto(Base):
+    """HU-03: impuesto global (IVA) expresado como porcentaje 0-100."""
+    __tablename__ = "impuestos"
 
     id = Column(Integer, primary_key=True, index=True)
-    tasa_iva = Column(Float, nullable=False, default=19.0)
-    margen_ganancia = Column(Float, nullable=False, default=25.0)
-    moneda_base = Column(String(3), nullable=False, default="COP")
+    nombre = Column(String(30), unique=True, nullable=False)
+    tasaIva = Column(Float, nullable=False)
+    actualizadoEn = Column(DateTime, nullable=False, default=ahoraUtc)
+
+
+class ParametroFinanciero(Base):
+    """HU-04: parámetros financieros globales (MARGEN_GANANCIA) expresados como porcentaje."""
+    __tablename__ = "parametros_financieros"
+
+    id = Column(Integer, primary_key=True, index=True)
+    parametro = Column(String(40), unique=True, nullable=False)
+    margenGanancia = Column(Float, nullable=False)
+    actualizadoEn = Column(DateTime, nullable=False, default=ahoraUtc)
 
 
 class MetodoPago(Base):
-    """Representa los medios de pago habilitados en la tienda (HU-05)."""
+    """HU-05: método de pago (dato semilla TT-02); se inactiva con borrado lógico."""
     __tablename__ = "metodos_pago"
 
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String(50), unique=True, nullable=False)
-    estado = Column(String(20), nullable=False, default="Activo")
+    nombre = Column(String(60), unique=True, nullable=False)
+    estado = Column(String(20), nullable=False, default=ESTADO_ACTIVO)
 
 
 # =====================================================================
-# 2. ESQUEMAS DE VALIDACIÓN Y REGLAS DE DOMINIO (Pydantic DTOs)
+# Contratos de entrada / salida (camelCase en español)
 # =====================================================================
 
 class CrearMonedaEntrada(BaseModel):
-    """Contrato de entrada para HU-01 (FUN-00.1.1: Registrar nueva moneda)."""
-    codigo_iso: str = Field(..., min_length=3, max_length=3, examples=["EUR"])
-    nombre: str = Field(..., min_length=3, max_length=50, examples=["Euro"])
-    tasa_cambio_usd: float = Field(default=1.0, gt=0, examples=[0.92])
-
-    @field_validator("codigo_iso")
-    @classmethod
-    def normalizar_codigo_iso(cls, valor: str) -> str:
-        if not valor.isalpha():
-            raise ValueError("El código ISO debe contener únicamente 3 letras (ej. COP, USD).")
-        return valor.upper()
+    nombre: Optional[Any] = None
+    codigoIso: Optional[Any] = None
 
 
 class MonedaSalida(BaseModel):
-    """Contrato de salida para HU-01 y HU-02."""
-    id: int
-    codigo_iso: str
+    monedaId: int
     nombre: str
-    tasa_cambio_usd: float
+    codigoIso: str
     estado: str
 
-    class Config:
-        from_attributes = True
+
+class MonedaResumenSalida(BaseModel):
+    codigoIso: str
+    nombre: str
 
 
 class ActualizarIvaEntrada(BaseModel):
-    """Contrato de entrada para HU-03 (PRO-00.1.3: Validar IVA entre 0 y 100)."""
-    tasa_iva: float = Field(..., ge=0, le=100, examples=[19.0])
+    tasaIva: Optional[Any] = None
+
+
+class ImpuestoSalida(BaseModel):
+    impuestoId: int
+    nombre: str
+    tasaIva: float
+    actualizadoEn: str
 
 
 class ActualizarMargenEntrada(BaseModel):
-    """Contrato de entrada para HU-04 (PRO-00.1.4: Validar markup > 0 y proteger RN-02)."""
-    margen_ganancia: float = Field(..., gt=0, examples=[25.0])
+    margenGanancia: Optional[Any] = None
 
 
-class CrearMetodoPagoEntrada(BaseModel):
-    """Contrato de entrada auxiliar para crear métodos de pago."""
-    nombre: str = Field(..., min_length=2, max_length=50, examples=["Efecty"])
+class MargenSalida(BaseModel):
+    parametro: str
+    margenGanancia: float
+    actualizadoEn: str
 
 
 class MetodoPagoSalida(BaseModel):
-    """Contrato de salida para HU-05 (Inactivación lógica de método de pago)."""
-    id: int
+    metodoPagoId: int
     nombre: str
     estado: str
 
-    class Config:
-        from_attributes = True
+
+class ParametrosFinancierosSalida(BaseModel):
+    tasaIva: float
+    margenGanancia: float
+    monedaBase: str
+
+
+class TasaCambioSalida(BaseModel):
+    codigoIso: str
+    tasaCambio: float
+    consultadaEn: str
+
+
+# =====================================================================
+# Reglas de dominio
+# =====================================================================
+
+def porcentajeADecimal(porcentaje: float) -> float:
+    """Convierte un porcentaje (19) a decimal (0.19). Único punto de conversión (HU-03 / HU-04)."""
+    return float(porcentaje) / 100.0
+
+
+def validarMoneda(nombre: Any, codigoIso: Any) -> tuple[str, str]:
+    """HU-01: codigoIso ^[A-Z]{3}$ y nombre no vacío."""
+    if not isinstance(codigoIso, str) or not PATRON_CODIGO_ISO.match(codigoIso):
+        raise ErrorAplicacion(400, MENSAJE_CODIGO_ISO_INVALIDO)
+    if not isinstance(nombre, str) or not nombre.strip():
+        raise ErrorAplicacion(400, MENSAJE_NOMBRE_OBLIGATORIO)
+    return nombre.strip(), codigoIso
+
+
+def validarFiltroEstado(estado: Optional[str]) -> str:
+    """HU-02: el filtro estado solo admite ACTIVO o INACTIVO (por defecto ACTIVO)."""
+    valor = ESTADO_ACTIVO if estado is None else estado
+    if valor not in ESTADOS_VALIDOS:
+        raise ErrorAplicacion(400, MENSAJE_FILTRO_ESTADO_INVALIDO)
+    return valor
+
+
+def _numero(valor: Any) -> Optional[float]:
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    return float(valor)
+
+
+def validarTasaIva(tasaIva: Any) -> float:
+    """HU-03: 0 <= tasaIva <= 100."""
+    numero = _numero(tasaIva)
+    if numero is None or not 0 <= numero <= 100:
+        raise ErrorAplicacion(400, MENSAJE_TASA_IVA_INVALIDA)
+    return numero
+
+
+def validarMargenGanancia(margenGanancia: Any) -> float:
+    """HU-04: margenGanancia > 0 (porcentaje)."""
+    numero = _numero(margenGanancia)
+    if numero is None or numero <= 0:
+        raise ErrorAplicacion(400, MENSAJE_MARGEN_INVALIDO)
+    return numero

@@ -1,39 +1,39 @@
-"""Pruebas de HU-22: Ver requisitos del sistema (GET /api/v1/catalogo/juegos/{gameId}/requisitos)."""
+"""Pruebas de HU-22: Ver requisitos del sistema (GET /api/v1/catalogo/juegos/{juegoId}/requisitos)."""
 from sqlalchemy.exc import OperationalError
 
-from app.domain.catalogo import RequisitoSistema, formatear_requisitos
+from app.domain.catalogo import RequisitoSistema, formatearRequisitos
 from app.repositories.repositorio_catalogo import RepositorioCatalogo
 
 
-def _registrar_requisitos(sesion, juego_id):
+def _registrarRequisitos(sesion, juegoId):
     sesion.add_all([
-        RequisitoSistema(juego_id=juego_id, tipo="MINIMO", so="Windows 10", procesador="Intel i5-8400",
+        RequisitoSistema(juegoId=juegoId, tipo="MINIMO", sistemaOperativo="Windows 10", procesador="Intel i5-8400",
                          memoria="8 GB", grafica="GTX 1060", almacenamiento="60 GB"),
-        RequisitoSistema(juego_id=juego_id, tipo="RECOMENDADO", so="Windows 11", procesador="Intel i7-9700",
+        RequisitoSistema(juegoId=juegoId, tipo="RECOMENDADO", sistemaOperativo="Windows 11", procesador="Intel i7-9700",
                          memoria="16 GB", grafica="RTX 2060", almacenamiento="60 GB SSD"),
     ])
     sesion.commit()
 
 
-def test_flujo_exitoso(cliente, sesion, crear_juego):
-    juego = crear_juego()
-    _registrar_requisitos(sesion, juego.id)
+def test_flujoExitoso(cliente, sesion, crearJuego):
+    juego = crearJuego()
+    _registrarRequisitos(sesion, juego.id)
     respuesta = cliente.get(f"/api/v1/catalogo/juegos/{juego.id}/requisitos")
     assert respuesta.status_code == 200
     assert respuesta.json() == {
         "message": "Consulta de requisitos exitosa",
         "data": {
-            "minimos": {"so": "Windows 10", "procesador": "Intel i5-8400", "memoria": "8 GB",
+            "minimos": {"sistemaOperativo": "Windows 10", "procesador": "Intel i5-8400", "memoria": "8 GB",
                         "grafica": "GTX 1060", "almacenamiento": "60 GB"},
-            "recomendados": {"so": "Windows 11", "procesador": "Intel i7-9700", "memoria": "16 GB",
+            "recomendados": {"sistemaOperativo": "Windows 11", "procesador": "Intel i7-9700", "memoria": "16 GB",
                              "grafica": "RTX 2060", "almacenamiento": "60 GB SSD"},
         },
         "success": True,
     }
 
 
-def test_juego_de_consola_sin_requisitos_retorna_200_informativo(cliente, crear_juego):
-    juego = crear_juego(plataformas=("CONSOLA",))
+def test_juegoDeConsolaSinRequisitosRetorna200Informativo(cliente, crearJuego):
+    juego = crearJuego(plataformas=("CONSOLA",))
     respuesta = cliente.get(f"/api/v1/catalogo/juegos/{juego.id}/requisitos")
     assert respuesta.status_code == 200
     assert respuesta.json() == {
@@ -41,26 +41,26 @@ def test_juego_de_consola_sin_requisitos_retorna_200_informativo(cliente, crear_
     }
 
 
-def test_dominio_formatea_solo_minimos():
-    datos = formatear_requisitos([RequisitoSistema(tipo="MINIMO", so="Windows 10")])
-    assert datos["minimos"]["so"] == "Windows 10"
+def test_dominioFormateaSoloMinimos():
+    datos = formatearRequisitos([RequisitoSistema(tipo="MINIMO", sistemaOperativo="Windows 10")])
+    assert datos["minimos"]["sistemaOperativo"] == "Windows 10"
     assert datos["recomendados"] is None
-    assert formatear_requisitos([]) is None
+    assert formatearRequisitos([]) is None
 
 
-def test_error_404_juego_inexistente(cliente):
+def test_error404JuegoInexistente(cliente):
     respuesta = cliente.get("/api/v1/catalogo/juegos/9999/requisitos")
     assert respuesta.status_code == 404
     assert respuesta.json() == {"message": "El juego indicado no existe", "data": None, "success": False}
 
 
-def test_error_503_base_de_datos(cliente, crear_juego, monkeypatch):
-    juego = crear_juego()
+def test_error503BaseDeDatos(cliente, crearJuego, monkeypatch):
+    juego = crearJuego()
 
     def _falla(*_args, **_kwargs):
         raise OperationalError("SELECT", {}, Exception("BD caída"))
 
-    monkeypatch.setattr(RepositorioCatalogo, "listar_requisitos", _falla)
+    monkeypatch.setattr(RepositorioCatalogo, "listarRequisitos", _falla)
     respuesta = cliente.get(f"/api/v1/catalogo/juegos/{juego.id}/requisitos")
     assert respuesta.status_code == 503
     assert respuesta.json() == {"message": "No fue posible consultar los requisitos", "data": None, "success": False}

@@ -1,131 +1,156 @@
-from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from app.core.configuracion import settings
-from app.domain.parametros import CrearMonedaEntrada, CrearMetodoPagoEntrada
+
+from app.core.configuracion import configuracion
+from app.core.fechas import aIsoZ
+from app.core.respuestas import ErrorAplicacion, manejarErroresBd, respuesta
+from app.domain.parametros import (
+    ESTADO_ACTIVO,
+    ESTADO_INACTIVO,
+    MONEDA_BASE,
+    NOMBRE_IMPUESTO_IVA,
+    PARAMETRO_MARGEN_GANANCIA,
+    CrearMonedaEntrada,
+    validarFiltroEstado,
+    validarMargenGanancia,
+    validarMoneda,
+    validarTasaIva,
+)
 from app.repositories.repositorio_parametros import RepositorioParametros
+from app.services.cliente_divisas import ClienteDivisas, DivisasNoDisponible
+
+METODOS_PAGO_SEMILLA = ("PSE", "Tarjeta de crédito", "Nequi")
+MENSAJE_TASA_NO_DISPONIBLE = "No fue posible obtener la tasa de cambio vigente"
+
 
 class ServicioParametros:
-    """
-    Capa Application / Service de MOD-00: Orquesta los casos de uso
-    (PRO-00.1.1 a PRO-00.1.5) y los contratos internos (COM-01 a COM-03).
-    """
+    """Capa Application / Service de MOD-00: HU-01 a HU-05 y contratos COM-01, COM-02 y COM-03."""
 
     def __init__(self):
         self.repositorio = RepositorioParametros()
+        self.clienteDivisas = ClienteDivisas()
 
-    def inicializar_datos_por_defecto(self, sesion: Session):
-        """Garantiza que el sistema arranque con parámetros financieros y monedas base."""
-        configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
-        if not configuracion:
-            self.repositorio.crear_configuracion_inicial(
-                sesion=sesion,
-                tasa_iva=settings.TAX_RATE * 100,       # 0.19 -> 19.0%
-                margen=settings.DEFAULT_MARGIN * 100,   # 0.25 -> 25.0%
-                moneda=settings.DEFAULT_CURRENCY        # "COP"
-            )
+    # ===== TT-02: datos base =====
 
-        if not self.repositorio.obtener_moneda_por_codigo(sesion, "COP"):
-            self.repositorio.crear_moneda(sesion, "COP", "Peso Colombiano", 4200.0)
-        if not self.repositorio.obtener_moneda_por_codigo(sesion, "USD"):
-            self.repositorio.crear_moneda(sesion, "USD", "Dólar Estadounidense", 1.0)
+    def asegurarDatosBase(self, sesion: Session) -> None:
+        """TT-02: moneda COP, IVA, margen de ganancia y métodos de pago semilla (idempotente)."""
+        if self.repositorio.obtenerMonedaPorCodigo(sesion, MONEDA_BASE) is None:
+            self.repositorio.crearMoneda(sesion, "Peso colombiano", MONEDA_BASE)
+        if self.repositorio.obtenerImpuestoPorNombre(sesion, NOMBRE_IMPUESTO_IVA) is None:
+            self.repositorio.crearImpuesto(sesion, NOMBRE_IMPUESTO_IVA, float(configuracion.TASA_IVA))
+        if self.repositorio.obtenerMargen(sesion) is None:
+            self.repositorio.guardarMargen(sesion, float(configuracion.MARGEN_GANANCIA))
+        for nombre in METODOS_PAGO_SEMILLA:
+            if self.repositorio.obtenerMetodoPagoPorNombre(sesion, nombre) is None:
+                self.repositorio.crearMetodoPago(sesion, nombre)
 
-        for nombre_metodo in ["Tarjeta de Crédito", "PSE", "Nequi"]:
-            if not self.repositorio.obtener_metodo_pago_por_nombre(sesion, nombre_metodo):
-                self.repositorio.crear_metodo_pago(sesion, nombre_metodo)
+    # ===== HU-01: Registrar nueva moneda habilitada =====
 
-    # --- CASOS DE USO DE HISTORIAS DE USUARIO (HU-01 a HU-05) ---
-
-    def registrar_moneda(self, sesion: Session, datos: CrearMonedaEntrada):
-        """HU-01 / PRO-00.1.1: Validar unicidad del código ISO y crear moneda activa."""
-        existente = self.repositorio.obtener_moneda_por_codigo(sesion, datos.codigo_iso)
-        if existente:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"La moneda con código ISO '{datos.codigo_iso}' ya se encuentra registrada."
-            )
-        return self.repositorio.crear_moneda(
-            sesion=sesion,
-            codigo_iso=datos.codigo_iso,
-            nombre=datos.nombre,
-            tasa_cambio_usd=datos.tasa_cambio_usd
+    def registrarMoneda(self, sesion: Session, datos: CrearMonedaEntrada) -> dict:
+        nombre, codigoIso = validarMoneda(datos.nombre, datos.codigoIso)
+        with manejarErroresBd("No fue posible registrar la moneda"):
+            if self.repositorio.obtenerMonedaPorCodigo(sesion, codigoIso) is not None:
+                raise ErrorAplicacion(409, f"La moneda con código ISO {codigoIso} ya existe")
+            moneda = self.repositorio.crearMoneda(sesion, nombre, codigoIso)
+        return respuesta(
+            "Moneda registrada exitosamente",
+            {"monedaId": moneda.id, "nombre": moneda.nombre, "codigoIso": moneda.codigoIso, "estado": moneda.estado},
         )
 
-    def consultar_monedas_habilitadas(self, sesion: Session):
-        """HU-02 / PRO-00.1.2: Retornar únicamente las monedas con estado 'Activo'."""
-        return self.repositorio.listar_monedas_activas(sesion)
+    # ===== HU-02: Consultar monedas activas =====
 
-    def actualizar_tasa_iva(self, sesion: Session, nueva_tasa_iva: float):
-        """HU-03 / PRO-00.1.3: Actualizar el porcentaje de IVA (validado 0-100 en Domain)."""
-        self.inicializar_datos_por_defecto(sesion)
-        configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
-        return self.repositorio.actualizar_iva(sesion, configuracion, nueva_tasa_iva)
+    def consultarMonedas(self, sesion: Session, estado: str | None) -> dict:
+        filtro = validarFiltroEstado(estado)
+        with manejarErroresBd("No fue posible consultar las monedas"):
+            self.asegurarDatosBase(sesion)
+            monedas = self.repositorio.listarMonedasPorEstado(sesion, filtro)
+        if not monedas:
+            mensaje = "No existen monedas activas" if filtro == ESTADO_ACTIVO else "No existen monedas inactivas"
+            return respuesta(mensaje, [], False)
+        return respuesta("Consulta de monedas exitosa", [{"codigoIso": m.codigoIso, "nombre": m.nombre} for m in monedas])
 
-    def configurar_margen_ganancia(self, sesion: Session, nuevo_margen: float):
-        """HU-04 / PRO-00.1.4: Sobrescribir margen comercial (validado > 0 en Domain)."""
-        self.inicializar_datos_por_defecto(sesion)
-        configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
-        return self.repositorio.actualizar_margen(sesion, configuracion, nuevo_margen)
+    def monedaHabilitada(self, sesion: Session, codigoIso: str) -> bool:
+        """Usado por HU-31: la moneda de cobro debe existir y estar ACTIVO."""
+        self.asegurarDatosBase(sesion)
+        moneda = self.repositorio.obtenerMonedaPorCodigo(sesion, codigoIso)
+        return moneda is not None and moneda.estado == ESTADO_ACTIVO
 
-    def crear_metodo_pago(self, sesion: Session, datos: CrearMetodoPagoEntrada):
-        """Auxiliar para registrar nuevos métodos de pago."""
-        existente = self.repositorio.obtener_metodo_pago_por_nombre(sesion, datos.nombre)
-        if existente:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"El método de pago '{datos.nombre}' ya existe."
-            )
-        return self.repositorio.crear_metodo_pago(sesion, datos.nombre)
+    # ===== HU-03: Actualizar porcentaje de impuesto IVA =====
 
-    def listar_metodos_pago(self, sesion: Session):
-        """Consultar todos los métodos de pago y sus estados."""
-        self.inicializar_datos_por_defecto(sesion)
-        return self.repositorio.listar_metodos_pago(sesion)
+    def actualizarTasaIva(self, sesion: Session, impuestoId: int, tasaIva) -> dict:
+        valor = validarTasaIva(tasaIva)
+        with manejarErroresBd("No fue posible actualizar la tasa de impuesto"):
+            self.asegurarDatosBase(sesion)
+            impuesto = self.repositorio.obtenerImpuesto(sesion, impuestoId)
+            if impuesto is None:
+                raise ErrorAplicacion(404, "El impuesto indicado no existe")
+            impuesto = self.repositorio.actualizarTasaIva(sesion, impuesto, valor)
+        return respuesta(
+            "Tasa de IVA actualizada exitosamente",
+            {
+                "impuestoId": impuesto.id,
+                "nombre": impuesto.nombre,
+                "tasaIva": float(impuesto.tasaIva),
+                "actualizadoEn": aIsoZ(impuesto.actualizadoEn),
+            },
+        )
 
-    def inactivar_metodo_pago(self, sesion: Session, metodo_id: int):
-        """HU-05 / PRO-00.1.5: Inactivación lógica (borrado lógico) de método de pago."""
-        metodo = self.repositorio.obtener_metodo_pago_por_id(sesion, metodo_id)
-        if not metodo:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No se encontró el método de pago con ID {metodo_id}."
-            )
-        if metodo.estado == "Inactivo":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"El método de pago '{metodo.nombre}' ya se encontraba inactivo."
-            )
-        return self.repositorio.inactivar_metodo_pago(sesion, metodo)
+    # ===== HU-04: Configurar margen de ganancia =====
 
-    # --- CONTRATOS INTERNOS ENTRE MICROSERVICIOS (Tabla 10 del informe) ---
+    def configurarMargenGanancia(self, sesion: Session, margenGanancia) -> dict:
+        valor = validarMargenGanancia(margenGanancia)
+        with manejarErroresBd("No fue posible actualizar el margen de ganancia"):
+            parametro = self.repositorio.guardarMargen(sesion, valor)
+        return respuesta(
+            "Margen de ganancia actualizado exitosamente",
+            {
+                "parametro": PARAMETRO_MARGEN_GANANCIA,
+                "margenGanancia": float(parametro.margenGanancia),
+                "actualizadoEn": aIsoZ(parametro.actualizadoEn),
+            },
+        )
 
-    def obtener_contrato_com01(self, sesion: Session) -> dict:
-        """COM-01 (Para MOD-02 Catálogo): Entrega taxRate y margin vigentes en formato decimal."""
-        self.inicializar_datos_por_defecto(sesion)
-        configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
+    # ===== HU-05: Inactivar método de pago =====
+
+    def inactivarMetodoPago(self, sesion: Session, metodoPagoId: int) -> dict:
+        with manejarErroresBd("No fue posible inactivar el método de pago"):
+            self.asegurarDatosBase(sesion)
+            metodo = self.repositorio.obtenerMetodoPago(sesion, metodoPagoId)
+            if metodo is None:
+                raise ErrorAplicacion(404, "El método de pago indicado no existe")
+            if metodo.estado == ESTADO_INACTIVO:
+                raise ErrorAplicacion(409, "El método de pago ya se encuentra inactivo")
+            metodo = self.repositorio.inactivarMetodoPago(sesion, metodo)
+        return respuesta(
+            "Método de pago inactivado exitosamente",
+            {"metodoPagoId": metodo.id, "nombre": metodo.nombre, "estado": metodo.estado},
+        )
+
+    # ===== Contratos internos =====
+
+    def obtenerContratoCom01(self, sesion: Session) -> dict:
+        """COM-01 / COM-02: {tasaIva, margenGanancia, monedaBase}; porcentajes de 0 a 100."""
+        self.asegurarDatosBase(sesion)
+        impuesto = self.repositorio.obtenerImpuestoPorNombre(sesion, NOMBRE_IMPUESTO_IVA)
+        margen = self.repositorio.obtenerMargen(sesion)
         return {
-            "taxRate": round(configuracion.tasa_iva / 100, 4),
-            "margin": round(configuracion.margen_ganancia / 100, 4)
+            "tasaIva": float(impuesto.tasaIva),
+            "margenGanancia": float(margen.margenGanancia),
+            "monedaBase": MONEDA_BASE,
         }
 
-    def obtener_contrato_com02(self, sesion: Session) -> dict:
-        """COM-02 (Para MOD-04 Carrito y Órdenes): Entrega taxRate y currency vigentes."""
-        self.inicializar_datos_por_defecto(sesion)
-        configuracion = self.repositorio.obtener_configuracion_financiera(sesion)
-        return {
-            "taxRate": round(configuracion.tasa_iva / 100, 4),
-            "currency": configuracion.moneda_base
-        }
+    def obtenerContratoCom03(self, sesion: Session, codigoIso: str) -> dict:
+        """
+        COM-03: {codigoIso, tasaCambio, consultadaEn} en COP por 1 unidad de la moneda.
+        COP retorna 1 sin consultar la API de Divisas; otra moneda debe estar habilitada (ACTIVO).
+        """
+        codigo = (codigoIso or "").upper()
+        if codigo == MONEDA_BASE:
+            from app.core.fechas import ahoraUtc
 
-    def obtener_contrato_com03(self, sesion: Session, moneda_iso: str) -> dict:
-        """COM-03 (Para MOD-05 Transacciones): Entrega tasa de cambio vigente de la moneda."""
-        self.inicializar_datos_por_defecto(sesion)
-        moneda = self.repositorio.obtener_moneda_por_codigo(sesion, moneda_iso.upper())
-        if not moneda or moneda.estado != "Activo":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"La moneda '{moneda_iso.upper()}' no existe o no está activa."
-            )
-        return {
-            "currency": moneda.codigo_iso,
-            "exchangeRate": moneda.tasa_cambio_usd
-        }
+            return {"codigoIso": MONEDA_BASE, "tasaCambio": 1.0, "consultadaEn": ahoraUtc()}
+        if not self.monedaHabilitada(sesion, codigo):
+            raise ErrorAplicacion(409, "La moneda indicada no está habilitada")
+        try:
+            return self.clienteDivisas.consultarTasa(codigo)
+        except DivisasNoDisponible as error:
+            raise ErrorAplicacion(503, MENSAJE_TASA_NO_DISPONIBLE) from error
