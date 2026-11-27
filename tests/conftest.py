@@ -7,7 +7,7 @@ import tempfile
 from datetime import date
 
 _DIRECTORIO_TEMPORAL = tempfile.mkdtemp(prefix="bitarcade-tests-")
-os.environ["DATABASE_URL"] = f"sqlite:///{_DIRECTORIO_TEMPORAL}/import.db"
+os.environ["URL_BASE_DATOS"] = f"sqlite:///{_DIRECTORIO_TEMPORAL}/import.db"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -15,40 +15,58 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from app.core.base_datos import Base, get_db  # noqa: E402
+from app.core.base_datos import Base, obtenerSesionBd  # noqa: E402
 from app.domain.catalogo import Juego, PlataformaJuego  # noqa: E402
 from main import app  # noqa: E402
 
-motor_pruebas = create_engine(
+motorPruebas = create_engine(
     "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
 )
-SesionPruebas = sessionmaker(autocommit=False, autoflush=False, bind=motor_pruebas)
+SesionPruebas = sessionmaker(autocommit=False, autoflush=False, bind=motorPruebas)
 
 
 @pytest.fixture
 def sesion():
-    Base.metadata.create_all(bind=motor_pruebas)
+    Base.metadata.create_all(bind=motorPruebas)
     db = SesionPruebas()
     try:
         yield db
     finally:
         db.close()
-        Base.metadata.drop_all(bind=motor_pruebas)
+        Base.metadata.drop_all(bind=motorPruebas)
 
 
 @pytest.fixture
 def cliente(sesion):
-    def _obtener_sesion_pruebas():
+    """
+    Cliente HTTP de pruebas. Lleva por defecto el token de servicio (X-Token-Servicio) que un módulo
+    envía al invocar las rutas /interno/v1; las rutas públicas lo ignoran. Las pruebas que verifican
+    el 401 de las rutas internas usan `clienteSinTokenServicio`.
+    """
+    from app.core.seguridad import encabezadosServicio
+
+    def _obtenerSesionPruebas():
         yield sesion
 
-    app.dependency_overrides[get_db] = _obtener_sesion_pruebas
-    with TestClient(app) as cliente_http:
-        yield cliente_http
+    app.dependency_overrides[obtenerSesionBd] = _obtenerSesionPruebas
+    with TestClient(app, headers=encabezadosServicio("MOD-05")) as clienteHttp:
+        yield clienteHttp
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def crear_juego(sesion):
+def clienteSinTokenServicio(sesion):
+    def _obtenerSesionPruebas():
+        yield sesion
+
+    app.dependency_overrides[obtenerSesionBd] = _obtenerSesionPruebas
+    with TestClient(app) as clienteHttp:
+        yield clienteHttp
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def crearJuego(sesion):
     """Fábrica de juegos de prueba (datos base TT-01)."""
 
     def _crear(
@@ -56,9 +74,9 @@ def crear_juego(sesion):
         genero="RPG",
         plataformas=("PC", "CONSOLA"),
         estado="ACTIVO",
-        costo_adquisicion=160000.0,
+        costoAdquisicion=160000.0,
         destacado=False,
-        fecha_lanzamiento=date(2026, 3, 15),
+        fechaLanzamiento=date(2026, 3, 15),
         descripcion="RPG de mundo abierto",
         desarrollador="Nova Studio",
         **extra,
@@ -67,9 +85,9 @@ def crear_juego(sesion):
             titulo=titulo,
             genero=genero,
             estado=estado,
-            costo_adquisicion=costo_adquisicion,
+            costoAdquisicion=costoAdquisicion,
             destacado=destacado,
-            fecha_lanzamiento=fecha_lanzamiento,
+            fechaLanzamiento=fechaLanzamiento,
             descripcion=descripcion,
             desarrollador=desarrollador,
             **extra,
@@ -84,30 +102,40 @@ def crear_juego(sesion):
 
 
 @pytest.fixture
-def crear_keys(sesion):
-    """Registra keys de inventario (modelo provisional de MOD-03 usado por COM-12)."""
-    from app.domain.inventario import KeyLicencia
+def crearClaves(sesion):
+    """Registra claves de inventario (modelo provisional de MOD-03 usado por COM-12)."""
+    from app.domain.inventario import ClaveLicencia
 
-    def _crear(juego_id: int, disponibles: int = 0, estado_extra: str | None = None, cantidad_extra: int = 0):
-        sesion.add_all([KeyLicencia(juego_id=juego_id, estado="DISPONIBLE") for _ in range(disponibles)])
-        if estado_extra:
-            sesion.add_all([KeyLicencia(juego_id=juego_id, estado=estado_extra) for _ in range(cantidad_extra)])
+    def _crear(juegoId: int, disponibles: int = 0, estadoExtra: str | None = None, cantidadExtra: int = 0):
+        sesion.add_all([ClaveLicencia(juegoId=juegoId, estado="DISPONIBLE") for _ in range(disponibles)])
+        if estadoExtra:
+            sesion.add_all([ClaveLicencia(juegoId=juegoId, estado=estadoExtra) for _ in range(cantidadExtra)])
         sesion.commit()
 
     return _crear
 
 
-def generar_token(usuario_id: int = 1, rol: str = "CLIENTE", minutos: int = 30, clave: str | None = None) -> str:
+def generarToken(usuarioId: int = 1, rol: str = "CLIENTE", minutos: int = 30, clave: str | None = None) -> str:
     """Genera un JWT de prueba equivalente al emitido por MOD-01 (HU-07)."""
     from datetime import datetime, timedelta, timezone
 
     import jwt
 
-    from app.core.configuracion import settings
+    from app.core.configuracion import configuracion
 
-    carga = {"sub": str(usuario_id), "rol": rol, "exp": datetime.now(timezone.utc) + timedelta(minutes=minutos)}
-    return jwt.encode(carga, clave or settings.SECRET_KEY, algorithm="HS256")
+    carga = {"sub": str(usuarioId), "rol": rol, "exp": datetime.now(timezone.utc) + timedelta(minutes=minutos)}
+    return jwt.encode(carga, clave or configuracion.CLAVE_SECRETA, algorithm="HS256")
 
 
-def encabezado_auth(usuario_id: int = 1, **kwargs) -> dict:
-    return {"Authorization": f"Bearer {generar_token(usuario_id, **kwargs)}"}
+def encabezadoAuth(usuarioId: int = 1, **kwargs) -> dict:
+    return {"Authorization": f"Bearer {generarToken(usuarioId, **kwargs)}"}
+
+
+def configurarParametros(cliente, tasaIva: float | None = None, margenGanancia: float | None = None) -> None:
+    """Actualiza los parámetros financieros de MOD-00 por sus endpoints (HU-03 / HU-04). Porcentajes 0-100."""
+    if tasaIva is not None:
+        respuesta = cliente.put("/api/v1/parametros/impuesto-iva", json={"tasa_iva": tasaIva})
+        assert respuesta.status_code == 200, respuesta.json()
+    if margenGanancia is not None:
+        respuesta = cliente.put("/api/v1/parametros/margen-ganancia", json={"margen_ganancia": margenGanancia})
+        assert respuesta.status_code == 200, respuesta.json()

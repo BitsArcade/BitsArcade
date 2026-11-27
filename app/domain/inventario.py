@@ -8,6 +8,7 @@ adaptar `ClienteInventario` (app/services/cliente_inventario.py) y retirar este 
 Nunca se almacena ni se expone aquí el valor de la key.
 """
 from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy.orm import synonym
 
 from app.core.base_datos import Base
 
@@ -24,3 +25,14 @@ class KeyLicencia(Base):
     juego_id = Column(Integer, ForeignKey("juegos.id"), nullable=False, index=True)
     plataforma = Column(String(20), nullable=True)
     estado = Column(String(20), nullable=False, default=ESTADO_KEY_DISPONIBLE)
+
+    # Nombre de atributo según la convención actualizada (camelCase); la columna física se conserva.
+    juegoId = synonym("juego_id")
+
+
+# ===== Nombres según la convención actualizada (HU ajustadas): "clave" en lugar de "key" =====
+ESTADO_CLAVE_DISPONIBLE = ESTADO_KEY_DISPONIBLE
+ESTADO_CLAVE_RESERVADA = ESTADO_KEY_RESERVADA
+ESTADO_CLAVE_VENDIDA = ESTADO_KEY_VENDIDA
+ESTADOS_CLAVE = (ESTADO_CLAVE_DISPONIBLE, ESTADO_CLAVE_RESERVADA, ESTADO_CLAVE_VENDIDA)
+ClaveLicencia = KeyLicencia
