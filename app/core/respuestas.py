@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Any, Generic, Optional, TypeVar
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,10 +27,19 @@ class Respuesta(BaseModel, Generic[T]):
 class ErrorAplicacion(Exception):
     """Error de validación, regla de negocio o infraestructura con su código HTTP."""
 
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
-        self.message = message
+    def __init__(self, codigoHttp: int, mensaje: str):
+        super().__init__(mensaje)
+        self.codigoHttp = codigoHttp
+        self.mensaje = mensaje
+
+    # Compatibilidad temporal: nombres anteriores de los atributos.
+    @property
+    def status_code(self) -> int:
+        return self.codigoHttp
+
+    @property
+    def message(self) -> str:
+        return self.mensaje
 
 
 def respuesta(message: str, data: Any, success: bool = True) -> dict:
@@ -38,7 +48,7 @@ def respuesta(message: str, data: Any, success: bool = True) -> dict:
 
 
 @contextmanager
-def manejar_errores_bd(mensaje: str):
+def manejarErroresBd(mensaje: str):
     """Traduce cualquier fallo de base de datos en un 503 con mensaje amigable."""
     try:
         yield
@@ -46,13 +56,39 @@ def manejar_errores_bd(mensaje: str):
         raise ErrorAplicacion(503, mensaje) from error
 
 
-async def _manejar_error_aplicacion(_: Request, error: ErrorAplicacion) -> JSONResponse:
+async def _manejarErrorAplicacion(_: Request, error: ErrorAplicacion) -> JSONResponse:
     return JSONResponse(
-        status_code=error.status_code,
-        content=respuesta(error.message, None, False),
+        status_code=error.codigoHttp,
+        content=respuesta(error.mensaje, None, False),
     )
 
 
-def registrar_manejadores_errores(app: FastAPI) -> None:
+def mensajeValidacion(errores: list[dict]) -> str:
+    """Traduce el primer error de validación de FastAPI/Pydantic a un mensaje en español."""
+    if not errores:
+        return "Los datos enviados no son válidos"
+    error = errores[0]
+    ubicacion = [str(parte) for parte in error.get("loc", ()) if parte not in ("body", "query", "path", "header")]
+    campo = ".".join(ubicacion) or "cuerpo"
+    tipo = error.get("type", "")
+    if tipo == "missing":
+        return f"El campo {campo} es obligatorio"
+    if tipo in ("json_invalid", "model_attributes_type", "dict_type"):
+        return "El cuerpo de la petición no es un JSON válido"
+    return f"El campo {campo} tiene un valor inválido"
+
+
+async def _manejarErrorValidacion(_: Request, error: RequestValidationError) -> JSONResponse:
+    """Las validaciones de entrada responden 400 con el sobre estándar y mensaje en español."""
+    return JSONResponse(status_code=400, content=respuesta(mensajeValidacion(error.errors()), None, False))
+
+
+def registrarManejadoresErrores(app: FastAPI) -> None:
     """Registra el manejador del contrato de error estándar en la aplicación."""
-    app.add_exception_handler(ErrorAplicacion, _manejar_error_aplicacion)
+    app.add_exception_handler(ErrorAplicacion, _manejarErrorAplicacion)
+    app.add_exception_handler(RequestValidationError, _manejarErrorValidacion)
+
+
+# ===== Compatibilidad temporal con los módulos que aún usan los nombres anteriores =====
+manejar_errores_bd = manejarErroresBd
+registrar_manejadores_errores = registrarManejadoresErrores
