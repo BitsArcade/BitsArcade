@@ -8,11 +8,13 @@ from app.domain import catalogo as modelos_catalogo
 from app.domain import inventario as modelos_inventario
 from app.domain import carrito as modelos_carrito
 from app.domain import ordenes as modelos_ordenes
+from app.domain import pagos as modelosPagos
 from app.api.usuarios import enrutadorUsuarios, enrutadorUsuariosInterno
 from app.api.catalogo import enrutadorCatalogo, enrutadorCatalogoInterno
 from app.api.inventario import enrutadorInventario, enrutadorInventarioInterno
 from app.api.carrito import enrutadorCarrito
 from app.api.ordenes import enrutadorOrdenes, enrutadorOrdenesInterno
+from app.api.pagos import enrutadorPagos
 from app.core.respuestas import registrar_manejadores_errores
 from app.services.tareas_programadas import iniciarTareasProgramadas
 
@@ -35,6 +37,7 @@ app.include_router(enrutadorInventarioInterno)
 app.include_router(enrutadorCarrito)
 app.include_router(enrutadorOrdenes)
 app.include_router(enrutadorOrdenesInterno)
+app.include_router(enrutadorPagos)
 
 registrar_manejadores_errores(app)
 
