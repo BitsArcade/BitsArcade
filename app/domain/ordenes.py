@@ -1,179 +1,265 @@
-from datetime import datetime, timedelta
+"""
+MOD-04: Órdenes de compra (HU-31 a HU-35) y contratos COM-08 / COM-09.
+
+- La orden congela precioUnitario, tasaIva y tasaCambio al crearse (RN-09); nadie los recalcula.
+- Los montos se guardan en COP (moneda base). Si la moneda de cobro es otra, el total y los precios
+  se convierten con la tasa congelada: monto en moneda = monto COP / tasaCambio.
+- Redondeo: COP sin decimales, otras monedas con 2 decimales; baseGravable + valorIva = total.
+- La orden guarda los reservaIds de sus claves (COM-06) para liberarlos (COM-13) al cancelar.
+"""
 from typing import Optional
-from pydantic import BaseModel, Field
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
+
+from pydantic import BaseModel
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.core.base_datos import Base
+from app.core.fechas import ahoraUtc
 from app.core.respuestas import ErrorAplicacion
-
-# =====================================================================
-# 1. CONSTANTES Y REGLAS DE DOMINIO (MOD-04 / SUB-04.2: Órdenes)
-# =====================================================================
+from app.domain.parametros import MONEDA_BASE, porcentajeADecimal
 
 ESTADO_ORDEN_PENDIENTE = "PENDIENTE"
 ESTADO_ORDEN_PROCESANDO = "PROCESANDO"
 ESTADO_ORDEN_PAGADA = "PAGADA"
 ESTADO_ORDEN_CANCELADA = "CANCELADA"
 ESTADO_ORDEN_ENTREGADA = "ENTREGADA"
+ESTADOS_ORDEN = (
+    ESTADO_ORDEN_PENDIENTE,
+    ESTADO_ORDEN_PROCESANDO,
+    ESTADO_ORDEN_PAGADA,
+    ESTADO_ORDEN_CANCELADA,
+    ESTADO_ORDEN_ENTREGADA,
+)
 
-MINUTOS_EXPIRACION_RESERVA = 15  # RN-04: Reserva temporal estricta de 15 minutos
+# HU-35: máquina de estados de la orden (COM-09). CANCELADA y ENTREGADA son terminales.
+TRANSICIONES_PERMITIDAS = {
+    ESTADO_ORDEN_PENDIENTE: {ESTADO_ORDEN_PROCESANDO, ESTADO_ORDEN_CANCELADA},
+    ESTADO_ORDEN_PROCESANDO: {ESTADO_ORDEN_PAGADA, ESTADO_ORDEN_CANCELADA},
+    ESTADO_ORDEN_PAGADA: {ESTADO_ORDEN_ENTREGADA},
+    ESTADO_ORDEN_CANCELADA: set(),
+    ESTADO_ORDEN_ENTREGADA: set(),
+}
+# Solicitantes autorizados de COM-09 por estado destino (HU-35, HU-40, HU-42).
+SOLICITANTES_POR_ESTADO = {
+    ESTADO_ORDEN_PROCESANDO: {"MOD-05"},
+    ESTADO_ORDEN_PAGADA: {"MOD-05"},
+    ESTADO_ORDEN_CANCELADA: {"MOD-05", "MOD-04"},
+    ESTADO_ORDEN_ENTREGADA: {"MOD-06"},
+}
 
+MINUTOS_EXPIRACION_ORDEN = 15
+MOTIVO_EXPIRACION = "Orden expirada (15 minutos sin pago)"
 
-def validarOrdenPendiente(estadoActual: str, accion: str) -> None:
-    """Valida que una orden solo pueda liquidarse, cancelarse o bloquearse si está PENDIENTE."""
-    if estadoActual != ESTADO_ORDEN_PENDIENTE:
-        raise ErrorAplicacion(
-            409,
-            f"No es posible {accion} la orden porque su estado actual es '{estadoActual}' (se requiere PENDIENTE)."
-        )
-
-
-def validarTransicionEstadoCom09(estadoActual: str, nuevoEstado: str) -> None:
-    """Valida transiciones permitidas desde el módulo de pagos (COM-09 / RN-06)."""
-    estadosPermitidos = (ESTADO_ORDEN_PAGADA, ESTADO_ORDEN_CANCELADA)
-    if nuevoEstado not in estadosPermitidos:
-        raise ErrorAplicacion(
-            400,
-            f"Estado destino inválido '{nuevoEstado}'. Solo se admite PAGADA o CANCELADA."
-        )
-    if estadoActual not in (ESTADO_ORDEN_PENDIENTE, ESTADO_ORDEN_PROCESANDO):
-        raise ErrorAplicacion(
-            409,
-            f"La orden ya se encuentra en estado terminal '{estadoActual}' y no puede modificarse."
-        )
-
-
-def calcularLiquidacionOrden(itemsCalculados: list[dict], tasaIvaDecimal: float) -> dict:
-    """
-    HU-32 (FUN-04.2.2 / PRO-04.2.2): Liquidación financiera de la orden.
-    Los precios unitarios ya vienen calculados con RN-01 desde Catálogo (COM-11)
-    y descuentos por volumen (RN-08) desde Carrito. Aquí se consolida el desglose fiscal.
-    """
-    totalConIva = round(sum(item["subtotal"] for item in itemsCalculados), 2)
-    descuentoTotal = round(sum(item["descuentoVolumen"] for item in itemsCalculados), 2)
-    baseGravable = round(totalConIva / (1 + tasaIvaDecimal), 2) if tasaIvaDecimal >= 0 else totalConIva
-    montoIva = round(totalConIva - baseGravable, 2)
-
-    return {
-        "subtotalBase": baseGravable,
-        "descuentoAplicado": descuentoTotal,
-        "montoIva": montoIva,
-        "totalPagar": totalConIva,
-    }
+MENSAJE_ORDEN_NO_EXISTE = "La orden indicada no existe"
+MENSAJE_TRANSICION_NO_PERMITIDA = "Transición de estado no permitida"
+MENSAJE_ORDEN_EXPIRADA = "La orden expiró"
+MENSAJE_CARRITO_VACIO = "No es posible generar una orden con el carrito vacío"
+MENSAJE_MONEDA_NO_HABILITADA = "La moneda indicada no está habilitada"
+MENSAJE_STOCK_INSUFICIENTE_ORDEN = "Stock insuficiente para generar la orden"
+MENSAJE_CUENTA_NO_CONFIRMADA = "Debe confirmar su cuenta para realizar compras"
+MENSAJE_SOLO_PENDIENTE = "Solo se pueden cancelar órdenes en estado PENDIENTE"
+MENSAJE_ESTADO_INVALIDO = "El estado indicado no es válido"
+MENSAJE_IDEMPOTENCIA_OBLIGATORIA = "El encabezado Idempotency-Key es obligatorio"
 
 
 # =====================================================================
-# 2. ENTIDADES DE DOMINIO (Tablas ORM en SQLite)
+# Entidades
 # =====================================================================
 
-class OrdenCompra(Base):
-    """Entidad principal de Órdenes de Compra (HU-31 a HU-35)."""
-    __tablename__ = "ordenes_compra"
+class Orden(Base):
+    """Orden de compra con valores congelados (RN-09)."""
+    __tablename__ = "ordenes"
+    __table_args__ = (UniqueConstraint("usuarioId", "claveIdempotencia", name="uq_orden_idempotencia"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    usuarioId = Column("usuario_id", Integer, index=True, nullable=False)
-    estado = Column(String(20), nullable=False, default=ESTADO_ORDEN_PENDIENTE)
-    moneda = Column(String(3), nullable=False, default="COP")
-    tasaCambioCongelada = Column("tasa_cambio_congelada", Float, nullable=False, default=1.0)
-    subtotalBase = Column("subtotal_base", Float, nullable=False, default=0.0)
-    descuentoAplicado = Column("descuento_aplicado", Float, nullable=False, default=0.0)
-    montoIva = Column("monto_iva", Float, nullable=False, default=0.0)
-    totalPagar = Column("total_pagar", Float, nullable=False, default=0.0)
-    motivoCancelacion = Column("motivo_cancelacion", String(200), nullable=True)
-    fechaCreacion = Column("fecha_creacion", DateTime, default=datetime.utcnow)
-    fechaExpiracionReserva = Column(
-        "fecha_expiracion_reserva",
-        DateTime,
-        default=lambda: datetime.utcnow() + timedelta(minutes=MINUTOS_EXPIRACION_RESERVA)
-    )
+    usuarioId = Column(Integer, nullable=False, index=True)
+    estado = Column(String(20), nullable=False, default=ESTADO_ORDEN_PENDIENTE, index=True)
+    moneda = Column(String(3), nullable=False, default=MONEDA_BASE)
+    tasaCambio = Column(Float, nullable=False, default=1.0)
+    tasaIva = Column(Float, nullable=False)
+    subtotalCop = Column(Float, nullable=False)
+    descuentosCop = Column(Float, nullable=False, default=0.0)
+    totalCop = Column(Float, nullable=False)
+    claveIdempotencia = Column(String(80), nullable=True)
+    transaccionId = Column(String(40), nullable=True)
+    motivoCancelacion = Column(String(200), nullable=True)
+    expiraEn = Column(DateTime, nullable=False)
+    creadaEn = Column(DateTime, nullable=False, default=ahoraUtc)
+    actualizadaEn = Column(DateTime, nullable=False, default=ahoraUtc)
+    entregadaEn = Column(DateTime, nullable=True)
 
-    detalles = relationship("DetalleOrden", back_populates="orden", cascade="all, delete-orphan", lazy="selectin")
-    reservas = relationship("ReservaOrdenKey", back_populates="orden", cascade="all, delete-orphan", lazy="selectin")
+    lineas = relationship("LineaOrden", back_populates="orden", cascade="all, delete-orphan", order_by="LineaOrden.id")
+    reservas = relationship("ReservaOrden", back_populates="orden", cascade="all, delete-orphan", order_by="ReservaOrden.id")
 
 
-class DetalleOrden(Base):
-    """Ítems congelados dentro de una OrdenCompra (HU-31)."""
-    __tablename__ = "detalles_orden"
+class LineaOrden(Base):
+    """Línea de la orden: juego, cantidad, precio unitario congelado (COP, IVA incluido) y descuento."""
+    __tablename__ = "lineas_orden"
 
     id = Column(Integer, primary_key=True, index=True)
-    ordenId = Column("orden_id", Integer, ForeignKey("ordenes_compra.id"), nullable=False)
-    juegoId = Column("juego_id", Integer, nullable=False)
-    tituloJuego = Column("titulo_juego", String(100), nullable=False)
+    ordenId = Column(Integer, ForeignKey("ordenes.id"), nullable=False, index=True)
+    juegoId = Column(Integer, nullable=False)
+    titulo = Column(String(150), nullable=True)
     cantidad = Column(Integer, nullable=False)
-    precioUnitario = Column("precio_unitario", Float, nullable=False)
-    descuentoVolumen = Column("descuento_volumen", Float, nullable=False, default=0.0)
-    subtotal = Column(Float, nullable=False)
+    precioUnitarioCop = Column(Float, nullable=False)
+    descuentoCop = Column(Float, nullable=False, default=0.0)
 
-    orden = relationship("OrdenCompra", back_populates="detalles")
+    orden = relationship("Orden", back_populates="lineas")
 
 
-class ReservaOrdenKey(Base):
-    """
-    Vincula cada orden con las keys reservadas en inventario (RN-04)
-    para poder liberarlas si la orden se cancela (HU-34 / RN-06) o venderlas al pagar.
-    """
-    __tablename__ = "reservas_orden_keys"
+class ReservaOrden(Base):
+    """Reserva de clave asociada a la orden (COM-06): una por unidad comprada."""
+    __tablename__ = "reservas_orden"
 
     id = Column(Integer, primary_key=True, index=True)
-    ordenId = Column("orden_id", Integer, ForeignKey("ordenes_compra.id"), nullable=False)
-    keyId = Column("key_id", Integer, ForeignKey("claves_licencia.id"), nullable=False)
+    ordenId = Column(Integer, ForeignKey("ordenes.id"), nullable=False, index=True)
+    juegoId = Column(Integer, nullable=False)
+    titulo = Column(String(150), nullable=True)
+    reservaId = Column(String(40), nullable=False, unique=True)
+    precioUnitarioCop = Column(Float, nullable=False)
 
-    orden = relationship("OrdenCompra", back_populates="reservas")
+    orden = relationship("Orden", back_populates="reservas")
 
 
 # =====================================================================
-# 3. ESQUEMAS DE ENTRADA / SALIDA (Pydantic DTOs en Español + camelCase)
+# Contratos de entrada / salida
 # =====================================================================
 
-class DetalleOrdenSalida(BaseModel):
-    juegoId: int
-    tituloJuego: str
-    cantidad: int
-    precioUnitario: float
-    descuentoVolumen: float
-    subtotal: float
-
-    model_config = {"from_attributes": True}
+class CrearOrdenEntrada(BaseModel):
+    moneda: Optional[str] = MONEDA_BASE
 
 
-class OrdenCompraSalida(BaseModel):
-    id: int
-    usuarioId: int
-    estado: str
-    moneda: str
-    tasaCambioCongelada: float
-    subtotalBase: float
-    descuentoAplicado: float
-    montoIva: float
-    totalPagar: float
-    motivoCancelacion: Optional[str] = None
-    fechaCreacion: datetime
-    fechaExpiracionReserva: Optional[datetime] = None
-    detalles: list[DetalleOrdenSalida] = []
-
-    model_config = {"from_attributes": True}
-
-
-class LiquidacionOrdenSalida(BaseModel):
-    """Contrato de salida para HU-32 (Liquidación financiera detallada)."""
+class OrdenSalida(BaseModel):
     ordenId: int
     estado: str
     moneda: str
-    tasaCambioAplicada: float
-    subtotalBase: float
-    descuentoAplicado: float
-    montoIva: float
-    totalPagar: float
-    items: list[DetalleOrdenSalida]
+    tasaCambio: float
+    total: float
+    expiraEn: str
+
+
+class DesgloseSalida(BaseModel):
+    subtotal: float
+    descuentos: float
+    baseGravable: float
+    valorIva: float
+    total: float
+
+
+class LineaLiquidacionSalida(BaseModel):
+    juegoId: int
+    cantidad: int
+    precioUnitario: float
+
+
+class LiquidacionSalida(BaseModel):
+    ordenId: int
+    moneda: str
+    tasaCambio: float
+    desglose: DesgloseSalida
+    lineas: list[LineaLiquidacionSalida]
+
+
+class OrdenPendienteSalida(BaseModel):
+    ordenId: int
+    total: float
+    moneda: str
+    expiraEn: str
 
 
 class CancelarOrdenEntrada(BaseModel):
-    """Contrato de entrada para HU-34 (Cancelar orden de compra)."""
-    motivo: str = Field(..., min_length=5, max_length=200, examples=["Decidí cambiar los juegos del pedido"])
+    motivo: Optional[str] = None
+
+
+class OrdenCanceladaSalida(BaseModel):
+    ordenId: int
+    estado: str
 
 
 class ActualizarEstadoOrdenEntrada(BaseModel):
-    """Contrato interno COM-09: actualización de estado desde Transacciones (MOD-05)."""
+    estado: str
+    transaccionId: Optional[str] = None
+    entregadaEn: Optional[str] = None
+
+
+class EstadoOrdenSalida(BaseModel):
     ordenId: int
-    estado: str = Field(..., examples=["PAGADA"])
+    estado: str
+    confirmado: bool
+
+
+class ItemContratoCom08(BaseModel):
+    juegoId: int
+    titulo: Optional[str] = None
+    reservaId: str
+    precioUnitario: float
+
+
+class ContratoCom08Salida(BaseModel):
+    ordenId: int
+    usuarioId: int
+    estado: str
+    moneda: str
+    tasaCambio: float
+    total: float
+    expiraEn: str
+    items: list[ItemContratoCom08]
+
+
+# =====================================================================
+# Reglas de dominio
+# =====================================================================
+
+def decimalesMoneda(moneda: str) -> int:
+    """COP sin decimales; otras monedas con 2 decimales."""
+    return 0 if moneda == MONEDA_BASE else 2
+
+
+def redondear(valor: float, moneda: str) -> float:
+    decimales = decimalesMoneda(moneda)
+    resultado = round(float(valor) + 0.0, decimales)
+    return float(int(resultado)) if decimales == 0 else resultado
+
+
+def convertirDesdeCop(montoCop: float, tasaCambio: float, moneda: str) -> float:
+    """Monto en moneda de cobro = monto COP / tasaCambio (tasa = COP por 1 unidad)."""
+    return redondear(montoCop / (tasaCambio or 1.0), moneda)
+
+
+def calcularLiquidacion(subtotalCop: float, descuentosCop: float, tasaIva: float, tasaCambio: float, moneda: str) -> dict:
+    """
+    HU-32: el precio unitario ya incluye IVA (RN-01): se extrae la base gravable sin volver a aplicar IVA.
+    baseGravable = total / (1 + tasaIva/100); valorIva = total - baseGravable.
+    """
+    subtotal = convertirDesdeCop(subtotalCop, tasaCambio, moneda)
+    descuentos = convertirDesdeCop(descuentosCop, tasaCambio, moneda)
+    total = redondear(subtotal - descuentos, moneda)
+    baseGravable = redondear(total / (1 + porcentajeADecimal(tasaIva)), moneda)
+    valorIva = redondear(total - baseGravable, moneda)
+    return {
+        "subtotal": subtotal,
+        "descuentos": descuentos,
+        "baseGravable": baseGravable,
+        "valorIva": valorIva,
+        "total": total,
+    }
+
+
+def validarEstadoConsulta(estado: Optional[str]) -> str:
+    """HU-33: filtro de estado (por defecto PENDIENTE)."""
+    valor = ESTADO_ORDEN_PENDIENTE if estado is None else str(estado).upper()
+    if valor not in ESTADOS_ORDEN:
+        raise ErrorAplicacion(400, MENSAJE_ESTADO_INVALIDO)
+    return valor
+
+
+def validarTransicion(estadoActual: str, estadoNuevo: str) -> None:
+    """HU-35 (COM-09): solo se permiten las transiciones de la máquina de estados."""
+    if estadoNuevo not in TRANSICIONES_PERMITIDAS.get(estadoActual, set()):
+        raise ErrorAplicacion(409, MENSAJE_TRANSICION_NO_PERMITIDA)
+
+
+def validarSolicitante(estadoNuevo: str, solicitante: Optional[str]) -> None:
+    """COM-09 ampliado: cada estado destino solo lo puede pedir su módulo autorizado (si se informa)."""
+    if solicitante and solicitante not in SOLICITANTES_POR_ESTADO.get(estadoNuevo, set()):
+        raise ErrorAplicacion(409, MENSAJE_TRANSICION_NO_PERMITIDA)

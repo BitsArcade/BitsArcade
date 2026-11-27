@@ -24,9 +24,7 @@ def ejecutarCiclo(sesion=None) -> dict:
     propia = sesion is None
     sesion = sesion or SesionLocal()
     try:
-        # HU-34 (MOD-04) agrega la cancelación de órdenes vencidas; mientras no esté integrada se omite.
-        cancelarExpiradas = getattr(ServicioOrdenes(), "cancelarOrdenesExpiradas", None)
-        ordenesCanceladas = cancelarExpiradas(sesion) if cancelarExpiradas else 0
+        ordenesCanceladas = ServicioOrdenes().cancelarOrdenesExpiradas(sesion)
         servicio = ServicioInventario()
         liberadas = servicio.liberarReservasVencidas(sesion)
         alertas = servicio.evaluarStockAgotado(sesion)
