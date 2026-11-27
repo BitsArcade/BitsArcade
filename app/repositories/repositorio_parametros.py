@@ -1,87 +1,86 @@
 from sqlalchemy.orm import Session
-from app.domain.parametros import Moneda, ConfiguracionFinanciera, MetodoPago
+
+from app.core.fechas import ahoraUtc
+from app.domain.parametros import (
+    ESTADO_ACTIVO,
+    ESTADO_INACTIVO,
+    PARAMETRO_MARGEN_GANANCIA,
+    Impuesto,
+    MetodoPago,
+    Moneda,
+    ParametroFinanciero,
+)
+
 
 class RepositorioParametros:
-    """
-    Capa Repository de MOD-00: Única encargada de ejecutar consultas
-    y persistir cambios en la base de datos SQLite (Tabla 8 del informe).
-    """
+    """Capa Repository de MOD-00: acceso a monedas, impuestos, parámetros y métodos de pago."""
 
-    # --- OPERACIONES DE MONEDAS (HU-01, HU-02) ---
+    # --- Monedas (HU-01 / HU-02) ---
+    def obtenerMonedaPorCodigo(self, sesion: Session, codigoIso: str) -> Moneda | None:
+        return sesion.query(Moneda).filter(Moneda.codigoIso == codigoIso).first()
 
-    def obtener_moneda_por_codigo(self, sesion: Session, codigo_iso: str) -> Moneda | None:
-        return sesion.query(Moneda).filter(Moneda.codigo_iso == codigo_iso).first()
-
-    def crear_moneda(self, sesion: Session, codigo_iso: str, nombre: str, tasa_cambio_usd: float) -> Moneda:
-        nueva_moneda = Moneda(
-            codigo_iso=codigo_iso,
-            nombre=nombre,
-            tasa_cambio_usd=tasa_cambio_usd,
-            estado="Activo"
-        )
-        sesion.add(nueva_moneda)
+    def crearMoneda(self, sesion: Session, nombre: str, codigoIso: str) -> Moneda:
+        moneda = Moneda(nombre=nombre, codigoIso=codigoIso, estado=ESTADO_ACTIVO)
+        sesion.add(moneda)
         sesion.commit()
-        sesion.refresh(nueva_moneda)
-        return nueva_moneda
+        sesion.refresh(moneda)
+        return moneda
 
-    def listar_monedas_activas(self, sesion: Session) -> list[Moneda]:
-        return sesion.query(Moneda).filter(Moneda.estado == "Activo").all()
+    def listarMonedasPorEstado(self, sesion: Session, estado: str) -> list[Moneda]:
+        return sesion.query(Moneda).filter(Moneda.estado == estado).order_by(Moneda.codigoIso.desc()).all()
 
-    # --- OPERACIONES DE CONFIGURACIÓN FINANCIERA (HU-03, HU-04, COM-01, COM-02) ---
+    # --- Impuestos (HU-03) ---
+    def obtenerImpuesto(self, sesion: Session, impuestoId: int) -> Impuesto | None:
+        return sesion.get(Impuesto, impuestoId)
 
-    def obtener_configuracion_financiera(self, sesion: Session) -> ConfiguracionFinanciera | None:
-        return sesion.query(ConfiguracionFinanciera).first()
+    def obtenerImpuestoPorNombre(self, sesion: Session, nombre: str) -> Impuesto | None:
+        return sesion.query(Impuesto).filter(Impuesto.nombre == nombre).first()
 
-    def crear_configuracion_inicial(
-        self, sesion: Session, tasa_iva: float, margen: float, moneda: str
-    ) -> ConfiguracionFinanciera:
-        configuracion = ConfiguracionFinanciera(
-            tasa_iva=tasa_iva,
-            margen_ganancia=margen,
-            moneda_base=moneda
-        )
-        sesion.add(configuracion)
+    def crearImpuesto(self, sesion: Session, nombre: str, tasaIva: float) -> Impuesto:
+        impuesto = Impuesto(nombre=nombre, tasaIva=tasaIva, actualizadoEn=ahoraUtc())
+        sesion.add(impuesto)
         sesion.commit()
-        sesion.refresh(configuracion)
-        return configuracion
+        sesion.refresh(impuesto)
+        return impuesto
 
-    def actualizar_iva(
-        self, sesion: Session, configuracion: ConfiguracionFinanciera, nueva_tasa_iva: float
-    ) -> ConfiguracionFinanciera:
-        configuracion.tasa_iva = nueva_tasa_iva
+    def actualizarTasaIva(self, sesion: Session, impuesto: Impuesto, tasaIva: float) -> Impuesto:
+        impuesto.tasaIva = tasaIva
+        impuesto.actualizadoEn = ahoraUtc()
         sesion.commit()
-        sesion.refresh(configuracion)
-        return configuracion
+        sesion.refresh(impuesto)
+        return impuesto
 
-    def actualizar_margen(
-        self, sesion: Session, configuracion: ConfiguracionFinanciera, nuevo_margen: float
-    ) -> ConfiguracionFinanciera:
-        configuracion.margen_ganancia = nuevo_margen
+    # --- Margen de ganancia (HU-04) ---
+    def obtenerMargen(self, sesion: Session) -> ParametroFinanciero | None:
+        return sesion.query(ParametroFinanciero).filter(ParametroFinanciero.parametro == PARAMETRO_MARGEN_GANANCIA).first()
+
+    def guardarMargen(self, sesion: Session, margenGanancia: float) -> ParametroFinanciero:
+        parametro = self.obtenerMargen(sesion)
+        if parametro is None:
+            parametro = ParametroFinanciero(parametro=PARAMETRO_MARGEN_GANANCIA, margenGanancia=margenGanancia)
+            sesion.add(parametro)
+        parametro.margenGanancia = margenGanancia
+        parametro.actualizadoEn = ahoraUtc()
         sesion.commit()
-        sesion.refresh(configuracion)
-        return configuracion
+        sesion.refresh(parametro)
+        return parametro
 
-    # --- OPERACIONES DE MÉTODOS DE PAGO (HU-05) ---
+    # --- Métodos de pago (HU-05) ---
+    def obtenerMetodoPago(self, sesion: Session, metodoPagoId: int) -> MetodoPago | None:
+        return sesion.get(MetodoPago, metodoPagoId)
 
-    def crear_metodo_pago(self, sesion: Session, nombre: str) -> MetodoPago:
-        metodo = MetodoPago(nombre=nombre, estado="Activo")
+    def obtenerMetodoPagoPorNombre(self, sesion: Session, nombre: str) -> MetodoPago | None:
+        return sesion.query(MetodoPago).filter(MetodoPago.nombre == nombre).first()
+
+    def crearMetodoPago(self, sesion: Session, nombre: str) -> MetodoPago:
+        metodo = MetodoPago(nombre=nombre, estado=ESTADO_ACTIVO)
         sesion.add(metodo)
         sesion.commit()
         sesion.refresh(metodo)
         return metodo
 
-    def obtener_metodo_pago_por_id(self, sesion: Session, metodo_id: int) -> MetodoPago | None:
-        return sesion.query(MetodoPago).filter(MetodoPago.id == metodo_id).first()
-
-    def obtener_metodo_pago_por_nombre(self, sesion: Session, nombre: str) -> MetodoPago | None:
-        return sesion.query(MetodoPago).filter(MetodoPago.nombre == nombre).first()
-
-    def listar_metodos_pago(self, sesion: Session) -> list[MetodoPago]:
-        return sesion.query(MetodoPago).all()
-
-    def inactivar_metodo_pago(self, sesion: Session, metodo: MetodoPago) -> MetodoPago:
-        # PRO-00.1.5: Borrado lógico cambiando el estado a "Inactivo" sin eliminar el registro
-        metodo.estado = "Inactivo"
+    def inactivarMetodoPago(self, sesion: Session, metodo: MetodoPago) -> MetodoPago:
+        metodo.estado = ESTADO_INACTIVO
         sesion.commit()
         sesion.refresh(metodo)
         return metodo
