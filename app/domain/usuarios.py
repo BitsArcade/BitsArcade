@@ -150,3 +150,39 @@ class PerfilSalida(BaseModel):
     telefono: Optional[str] = None
     rol: str
     creadoEn: str
+
+
+# ===== HU-09: Actualizar datos personales =====
+
+PATRON_TELEFONO = re.compile(r"^\d{7,15}$")
+
+
+def validarNombrePerfil(nombre: Optional[str]) -> str:
+    valor = (nombre or "").strip()
+    if not 2 <= len(valor) <= 80:
+        raise ErrorAplicacion(400, "El nombre debe tener entre 2 y 80 caracteres")
+    return valor
+
+
+def validarTelefono(telefono: Optional[str]) -> Optional[str]:
+    """Teléfono opcional: si se envía debe tener entre 7 y 15 dígitos."""
+    if telefono is None or str(telefono).strip() == "":
+        return None
+    valor = str(telefono).strip()
+    if not PATRON_TELEFONO.match(valor):
+        raise ErrorAplicacion(400, "El teléfono debe contener entre 7 y 15 dígitos")
+    return valor
+
+
+class ActualizarPerfilEntrada(BaseModel):
+    """Solo nombre y teléfono son editables; correo y rol se ignoran si se envían."""
+    nombre: Optional[str] = None
+    telefono: Optional[str] = None
+
+    model_config = {"json_schema_extra": {"examples": [{"nombre": "Ana María Pérez", "telefono": "3001234567"}]}}
+
+
+class PerfilActualizadoSalida(BaseModel):
+    usuarioId: int
+    nombre: str
+    telefono: Optional[str] = None
