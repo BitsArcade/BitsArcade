@@ -117,7 +117,7 @@ class ReservaOrdenKey(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     ordenId = Column("orden_id", Integer, ForeignKey("ordenes_compra.id"), nullable=False)
-    keyId = Column("key_id", Integer, ForeignKey("keys_licencia.id"), nullable=False)
+    keyId = Column("key_id", Integer, ForeignKey("claves_licencia.id"), nullable=False)
 
     orden = relationship("OrdenCompra", back_populates="reservas")
 
