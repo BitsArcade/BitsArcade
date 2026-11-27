@@ -198,11 +198,11 @@ class ServicioCarrito:
             },
         )
 
-    # --- HU-30: Vaciar carrito de compras (código ya fusionado en Development, con la convención) ---
+    # --- HU-30: Vaciar carrito de compras ---
 
     def vaciarCarrito(self, sesion: Session, usuario: UsuarioAutenticado) -> dict:
         """HU-30 (FUN-04.1.5 / PRO-04.1.5): Elimina todos los ítems del carrito activo del usuario."""
-        with manejarErroresBd("No fue posible vaciar el carrito de compras"):
+        with manejarErroresBd("No fue posible vaciar el carrito"):
             carrito = self._obtenerOCrearCarrito(sesion, usuario.id)
             carrito = self.repositorio.vaciarCarrito(sesion, carrito)
         return respuesta("Carrito vaciado exitosamente", self._armarCarrito(sesion, carrito))
