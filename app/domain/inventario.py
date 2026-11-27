@@ -17,14 +17,12 @@ ESTADOS_CLAVE = (ESTADO_CLAVE_DISPONIBLE, ESTADO_CLAVE_RESERVADA, ESTADO_CLAVE_V
 
 class ClaveLicencia(Base):
     """Licencia digital de un juego con su estado de inventario (DISPONIBLE, RESERVADA, VENDIDA)."""
-    # Se conserva el nombre físico de la tabla y de la columna del juego que ya usan las órdenes
-    # fusionadas en Development (HU-31 a HU-33). Los atributos siguen la convención actualizada.
-    __tablename__ = "keys_licencia"
+    __tablename__ = "claves_licencia"
     # ===== HU-11: Unicidad RN-03 sobre (juegoId, plataforma, hash de la clave) =====
-    __table_args__ = (UniqueConstraint("juego_id", "plataforma", "claveHash", name="uq_clave_juego_plataforma_hash"),)
+    __table_args__ = (UniqueConstraint("juegoId", "plataforma", "claveHash", name="uq_clave_juego_plataforma_hash"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    juegoId = Column("juego_id", Integer, ForeignKey("juegos.id"), nullable=False, index=True)
+    juegoId = Column(Integer, ForeignKey("juegos.id"), nullable=False, index=True)
     plataforma = Column(String(20), nullable=True)
     estado = Column(String(20), nullable=False, default=ESTADO_CLAVE_DISPONIBLE)
     # ===== HU-11: Columnas del vault =====
@@ -124,7 +122,7 @@ class ReservaClave(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     reservaId = Column(String(40), nullable=False, unique=True, index=True)
-    claveId = Column(Integer, ForeignKey("keys_licencia.id"), nullable=False, index=True)
+    claveId = Column(Integer, ForeignKey("claves_licencia.id"), nullable=False, index=True)
     ordenId = Column(Integer, nullable=False, index=True)
     juegoId = Column(Integer, nullable=False)
     estado = Column(String(20), nullable=False, default=ESTADO_RESERVA_ACTIVA)
