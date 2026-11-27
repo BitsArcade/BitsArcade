@@ -3,8 +3,10 @@ Utilidades de prueba compartidas por las HU de MOD-01 (Usuarios) y MOD-03 (Inven
 """
 import bcrypt
 
+from app.domain.inventario import CargaLoteEntrada, ReservarClavesEntrada
 from app.domain.usuarios import ESTADO_CONFIRMADA, Usuario
 from app.services.cliente_notificaciones import ENVIOS_SIMULADOS
+from app.services.servicio_inventario import ServicioInventario
 
 
 def limpiarSimulaciones() -> None:
@@ -21,3 +23,14 @@ def crearUsuario(sesion, correo="jugador@correo.com", contrasena="Clave#2026", n
     sesion.commit()
     sesion.refresh(usuario)
     return usuario
+
+
+def cargarClaves(sesion, juegoId=101, claves=("AAAAA-BBBBB-CCCCC",), plataforma="PC") -> dict:
+    return ServicioInventario().cargarLote(
+        sesion, CargaLoteEntrada(juegoId=juegoId, plataforma=plataforma, claves=list(claves))
+    )["data"]
+
+
+def reservar(sesion, ordenId=5001, juegoId=101, cantidad=1) -> list[str]:
+    datos = ReservarClavesEntrada(ordenId=ordenId, juegoId=juegoId, cantidad=cantidad)
+    return ServicioInventario().reservarClaves(sesion, datos)["data"]["reservaIds"]
