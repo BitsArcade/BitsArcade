@@ -13,10 +13,12 @@ from app.core.respuestas import (
     manejarErroresBd,
     respuesta,
 )
+from app.core.seguridad import emitirToken
 from app.domain.usuarios import (
     ESTADO_CONFIRMADA,
     TIPO_CODIGO_CONFIRMACION,
     ConfirmarRegistroEntrada,
+    InicioSesionEntrada,
     RegistroEntrada,
     codigoVigente,
     normalizarCorreo,
@@ -121,3 +123,18 @@ class ServicioUsuarios:
             usuario.estado = ESTADO_CONFIRMADA
             self.repositorio.guardar(sesion, usuario, registroCodigo)
         return respuesta("Cuenta confirmada exitosamente", {"usuarioId": usuario.id, "cuentaConfirmada": True})
+
+    # ===== HU-07: Iniciar sesión y generación de JWT =====
+
+    def iniciarSesion(self, sesion: Session, datos: InicioSesionEntrada) -> dict:
+        """HU-07: mismo mensaje para correo inexistente o clave incorrecta."""
+        with manejarErroresBd("No fue posible iniciar sesión"):
+            usuario = self.repositorio.obtenerPorCorreo(sesion, normalizarCorreo(datos.correo))
+        if usuario is None or not verificarContrasena(datos.contrasena or "", usuario.contrasenaHash):
+            raise ErrorAplicacion(401, "Credenciales inválidas")
+        cuentaConfirmada = usuario.estado == ESTADO_CONFIRMADA
+        token, segundos = emitirToken(usuario.id, usuario.rol, cuentaConfirmada)
+        return respuesta(
+            "Inicio de sesión exitoso",
+            {"token": token, "tipo": "Bearer", "expiraEn": segundos, "cuentaConfirmada": cuentaConfirmada},
+        )
